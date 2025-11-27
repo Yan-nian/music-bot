@@ -337,7 +337,7 @@ class MusicBot:
                 result = {'success': False, 'error': f'不支持的类型: {content_type}'}
             
             # 处理结果
-                if result.get('success'):
+            if result.get('success'):
                 # 保存下载历史
                 if content_type == 'song':
                     self.config_manager.add_download_history(
@@ -365,7 +365,8 @@ class MusicBot:
                         f"⏱️ 时长: {result.get('duration', '未知')}\n"
                         f"📂 保存位置: {filepath}"
                     )
-                    await progress_msg.edit_text(success_msg)                elif content_type in ['album', 'playlist']:
+                    await progress_msg.edit_text(success_msg)
+                elif content_type in ['album', 'playlist']:
                     # 构建歌曲列表
                     songs_list = result.get('songs', [])
                     success_songs = [s for s in songs_list if s.get('success')]

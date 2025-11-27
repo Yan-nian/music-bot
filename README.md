@@ -15,20 +15,73 @@
 
 ## 🚀 快速开始
 
-### Docker 部署（推荐）
+### Docker Compose 部署（推荐）
+
+#### 1. 克隆项目
 
 ```bash
-# 1. 克隆项目
-git clone https://github.com/your/music-bot.git
+git clone https://github.com/Yan-nian/music-bot.git
 cd music-bot
+```
 
-# 2. 修改 docker-compose.yml 中的下载路径
+#### 2. 创建 docker-compose.yml
 
-# 3. 启动服务
+```yaml
+version: '3.8'
+
+services:
+  music-bot:
+    image: yannian/music-bot:latest  # 或使用 build: . 本地构建
+    container_name: music-bot
+    restart: unless-stopped
+    ports:
+      - "5000:5000"  # Web 配置界面
+    volumes:
+      - ./db:/app/db                    # 配置数据库
+      - ./cookies:/app/cookies          # Cookies 文件
+      - ./logs:/app/logs                # 日志文件
+      - /path/to/downloads:/downloads   # 下载目录 (修改为你的实际路径)
+    environment:
+      - TZ=Asia/Shanghai
+      # 以下环境变量可选，也可以通过 Web 界面配置
+      # - TELEGRAM_BOT_TOKEN=your_bot_token
+      # - PROXY_HOST=http://192.168.1.1:7890
+```
+
+#### 3. 启动服务
+
+```bash
+# 后台启动
 docker-compose up -d
 
-# 4. 访问 Web 配置界面
-# http://localhost:5000
+# 查看日志
+docker-compose logs -f
+
+# 停止服务
+docker-compose down
+```
+
+#### 4. 访问 Web 配置界面
+
+打开浏览器访问 `http://localhost:5000`，配置：
+- Telegram Bot Token
+- 音乐平台设置
+- 下载路径等
+
+#### 5. 使用本地构建 (可选)
+
+如果你想本地构建镜像而不是使用预构建镜像：
+
+```yaml
+services:
+  music-bot:
+    build: .  # 替换 image 为 build
+    # ... 其余配置相同
+```
+
+然后运行：
+```bash
+docker-compose up -d --build
 ```
 
 ### 本地运行

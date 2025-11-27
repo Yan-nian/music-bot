@@ -5,9 +5,10 @@ on:
     branches:
       - main
     paths:
-      - 'music_bot/**'
+      - '**.py'
       - 'Dockerfile'
       - 'docker-compose.yml'
+      - 'requirements.txt'
       - '.github/workflows/docker.yml'
   workflow_dispatch:
 
@@ -34,8 +35,8 @@ jobs:
         id: docker_build
         uses: docker/build-push-action@v5
         with:
-          context: ./music_bot
-          file: ./music_bot/Dockerfile
+          context: .
+          file: ./Dockerfile
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/music-bot:latest
           platforms: linux/amd64,linux/arm64

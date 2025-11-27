@@ -7,6 +7,7 @@ Music Bot - 精简版音乐下载机器人
 
 import os
 import sys
+import time
 import logging
 import asyncio
 import threading
@@ -195,16 +196,56 @@ class MusicBot:
                 f"🔗 ID: {content_id}"
             )
             
-            # 下载
             # 使用平台专属下载路径
             download_dir = self.get_download_path_for_platform(downloader_name)
             
+            # 创建进度回调 - 用于动态更新进度
+            downloaded_songs = []
+            last_update_time = [0]  # 使用列表以便在闭包中修改
+            
+            async def update_progress_message(progress_text: str):
+                """更新进度消息，限制更新频率"""
+                current_time = time.time()
+                if current_time - last_update_time[0] >= 2:  # 至少间隔2秒更新一次
+                    try:
+                        await progress_msg.edit_text(progress_text)
+                        last_update_time[0] = current_time
+                    except Exception:
+                        pass  # 忽略编辑消息的错误
+            
+            def sync_progress_callback(progress_info: dict):
+                """同步进度回调（将被转换为异步调用）"""
+                status = progress_info.get('status', '')
+                
+                if status in ['album_progress', 'playlist_progress']:
+                    current = progress_info.get('current', 0)
+                    total = progress_info.get('total', 0)
+                    song_name = progress_info.get('song', '')
+                    
+                    # 记录正在下载的歌曲
+                    progress_text = (
+                        f"📥 正在下载...\n\n"
+                        f"📊 进度: {current}/{total}\n"
+                        f"🎵 当前: {song_name}\n\n"
+                        f"{'▓' * int(current/total*10)}{'░' * (10-int(current/total*10))} {int(current/total*100)}%"
+                    )
+                    
+                    # 使用 asyncio 调度更新
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            asyncio.create_task(update_progress_message(progress_text))
+                    except Exception:
+                        pass
+            
+            # 下载
+            
             if content_type == 'song':
-                result = downloader.download_song(content_id, download_dir)
+                result = downloader.download_song(content_id, download_dir, progress_callback=sync_progress_callback)
             elif content_type == 'album':
-                result = downloader.download_album(content_id, download_dir)
+                result = downloader.download_album(content_id, download_dir, progress_callback=sync_progress_callback)
             elif content_type == 'playlist':
-                result = downloader.download_playlist(content_id, download_dir)
+                result = downloader.download_playlist(content_id, download_dir, progress_callback=sync_progress_callback)
             else:
                 result = {'success': False, 'error': f'不支持的类型: {content_type}'}
             
@@ -213,17 +254,51 @@ class MusicBot:
                 if content_type == 'song':
                     filepath = result.get('filepath', '')
                     await progress_msg.edit_text(
-                        f"{self._format_success_message(result, content_type)}\n\n"
-                        f"📂 已保存到: {filepath}"
+                        f"✅ 下载完成！\n\n"
+                        f"🎵 {result.get('song_title', '未知')}\n"
+                        f"🎤 {result.get('song_artist', '未知')}\n"
+                        f"💾 {result.get('size_mb', 0):.2f} MB\n"
+                        f"🎚️ 音质: {result.get('quality', '未知')}\n\n"
+                        f"📂 已保存到:\n{filepath}"
                     )
                 
                 elif content_type in ['album', 'playlist']:
+                    # 构建歌曲列表
+                    songs_list = result.get('songs', [])
+                    success_songs = [s for s in songs_list if s.get('success')]
+                    failed_songs = [s for s in songs_list if not s.get('success')]
+                    
+                    # 成功的歌曲列表（最多显示20首）
+                    song_lines = []
+                    for i, song in enumerate(success_songs[:20], 1):
+                        song_lines.append(f"  {i}. {song.get('song_title', '未知')} - {song.get('song_artist', '未知')}")
+                    
+                    if len(success_songs) > 20:
+                        song_lines.append(f"  ... 还有 {len(success_songs) - 20} 首")
+                    
+                    # 构建完整消息
+                    title = result.get('album_name', result.get('playlist_title', '未知'))
                     summary = (
                         f"✅ 下载完成！\n\n"
-                        f"📀 {result.get('album_name', result.get('playlist_title', '未知'))}\n"
-                        f"📊 已下载: {result.get('downloaded_songs', 0)}/{result.get('total_songs', 0)} 首\n"
-                        f"📂 保存位置: {download_dir}"
+                        f"📀 {title}\n"
+                        f"📊 成功: {len(success_songs)}/{result.get('total_songs', 0)} 首\n"
                     )
+                    
+                    if failed_songs:
+                        summary += f"❌ 失败: {len(failed_songs)} 首\n"
+                    
+                    summary += f"\n📂 保存位置: {download_dir}\n"
+                    
+                    # 添加歌曲列表
+                    if song_lines:
+                        summary += f"\n🎵 下载的歌曲:\n" + "\n".join(song_lines)
+                    
+                    # 如果有失败的歌曲，列出失败原因
+                    if failed_songs and len(failed_songs) <= 5:
+                        summary += f"\n\n❌ 失败的歌曲:\n"
+                        for song in failed_songs[:5]:
+                            summary += f"  • {song.get('error', '未知错误')}\n"
+                    
                     await progress_msg.edit_text(summary)
                 else:
                     await progress_msg.edit_text(self._format_success_message(result, content_type))

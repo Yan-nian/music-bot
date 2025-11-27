@@ -42,12 +42,13 @@ from web.app import app as web_app, init_app as init_web_app
 
 # Telegram 相关导入
 try:
-    from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
     from telegram.ext import (
         Application, CommandHandler, MessageHandler,
         filters, ContextTypes, CallbackQueryHandler
     )
     from telegram.constants import ParseMode
+    from telegram.error import TelegramError
     TELEGRAM_AVAILABLE = True
 except ImportError:
     TELEGRAM_AVAILABLE = False
@@ -138,6 +139,66 @@ class MusicBot:
         
         await update.message.reply_text('\n'.join(status_lines), parse_mode=ParseMode.MARKDOWN)
     
+    async def send_audio_file(self, update: Update, filepath: str, song_title: str, song_artist: str):
+        """发送音频文件到 Telegram"""
+        try:
+            file_size = os.path.getsize(filepath)
+            max_size = 50 * 1024 * 1024  # 50MB Telegram Bot API 限制
+            
+            if file_size > max_size:
+                # 文件太大，尝试使用 Telethon（如果配置了 Session）
+                session_string = self.config.get('telegram_session_string', '')
+                if session_string:
+                    try:
+                        from telethon import TelegramClient
+                        from telethon.sessions import StringSession
+                        
+                        api_id = int(self.config.get('telegram_api_id', 0))
+                        api_hash = self.config.get('telegram_api_hash', '')
+                        
+                        if api_id and api_hash:
+                            client = TelegramClient(StringSession(session_string), api_id, api_hash)
+                            await client.connect()
+                            
+                            await client.send_file(
+                                update.effective_chat.id,
+                                filepath,
+                                caption=f"🎵 {song_title}\n🎤 {song_artist}",
+                                attributes=[]
+                            )
+                            
+                            await client.disconnect()
+                            logger.info(f"✅ 通过 Telethon 发送大文件成功: {filepath}")
+                            return True
+                    except Exception as e:
+                        logger.error(f"Telethon 发送失败: {e}")
+                
+                await update.message.reply_text(
+                    f"⚠️ 文件过大 ({file_size / (1024*1024):.1f} MB)，无法通过 Bot API 发送\n"
+                    f"💡 请配置 Telegram Session 以支持大文件发送"
+                )
+                return False
+            
+            # 使用 Bot API 发送
+            with open(filepath, 'rb') as audio:
+                await update.message.reply_audio(
+                    audio=audio,
+                    title=song_title,
+                    performer=song_artist,
+                    caption=f"🎵 {song_title}\n🎤 {song_artist}"
+                )
+            
+            logger.info(f"✅ 发送音频文件成功: {filepath}")
+            return True
+            
+        except TelegramError as e:
+            logger.error(f"发送音频失败: {e}")
+            await update.message.reply_text(f"⚠️ 发送文件失败: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"发送音频异常: {e}")
+            return False
+    
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理消息"""
         if not update.message or not update.message.text:
@@ -199,8 +260,66 @@ class MusicBot:
             
             # 发送结果
             if result.get('success'):
-                success_msg = self._format_success_message(result, content_type)
-                await progress_msg.edit_text(success_msg)
+                # 发送音频文件
+                if content_type == 'song':
+                    filepath = result.get('filepath')
+                    if filepath and os.path.exists(filepath):
+                        await progress_msg.edit_text("📤 正在发送文件...")
+                        sent = await self.send_audio_file(
+                            update, 
+                            filepath, 
+                            result.get('song_title', '未知'),
+                            result.get('song_artist', '未知')
+                        )
+                        if sent:
+                            await progress_msg.edit_text(self._format_success_message(result, content_type))
+                            # 可选：删除本地文件
+                            # os.remove(filepath)
+                        else:
+                            await progress_msg.edit_text(
+                                f"{self._format_success_message(result, content_type)}\n\n"
+                                f"📂 文件已保存到服务器"
+                            )
+                    else:
+                        await progress_msg.edit_text(self._format_success_message(result, content_type))
+                
+                elif content_type in ['album', 'playlist']:
+                    # 专辑/歌单：发送所有成功下载的文件
+                    songs = result.get('songs', [])
+                    sent_count = 0
+                    failed_count = 0
+                    
+                    await progress_msg.edit_text(f"📤 正在发送 {len(songs)} 个文件...")
+                    
+                    for song in songs:
+                        if song.get('success'):
+                            filepath = song.get('filepath')
+                            if filepath and os.path.exists(filepath):
+                                sent = await self.send_audio_file(
+                                    update,
+                                    filepath,
+                                    song.get('song_title', '未知'),
+                                    song.get('song_artist', '未知')
+                                )
+                                if sent:
+                                    sent_count += 1
+                                else:
+                                    failed_count += 1
+                                # 避免发送过快
+                                await asyncio.sleep(1)
+                    
+                    summary = (
+                        f"✅ 下载完成！\n\n"
+                        f"📀 {result.get('album_name', result.get('playlist_title', '未知'))}\n"
+                        f"📊 已下载: {result.get('downloaded_songs', 0)}/{result.get('total_songs', 0)} 首\n"
+                        f"📤 已发送: {sent_count} 首"
+                    )
+                    if failed_count > 0:
+                        summary += f"\n⚠️ 发送失败: {failed_count} 首"
+                    
+                    await progress_msg.edit_text(summary)
+                else:
+                    await progress_msg.edit_text(self._format_success_message(result, content_type))
             else:
                 await progress_msg.edit_text(f"❌ 下载失败\n{result.get('error', '未知错误')}")
             
@@ -262,7 +381,7 @@ class MusicBot:
         if not bot_token or bot_token == '******':
             logger.error("❌ 未配置 Telegram Bot Token")
             logger.info("💡 请访问 Web 配置界面 (http://localhost:5000) 配置 Bot Token")
-            # 不退出，保持 Web 服务运行
+            # 不退出，保持 Web 服务运行，定期检查配置
             while True:
                 await asyncio.sleep(60)
                 # 重新加载配置检查是否已配置
@@ -272,8 +391,22 @@ class MusicBot:
                     logger.info("✅ 检测到 Bot Token 已配置，正在启动...")
                     break
         
+        # 配置代理
+        proxy_url = None
+        if self.config.get('proxy_enabled', False):
+            proxy_url = self.config.get('proxy_host', '')
+            if proxy_url:
+                logger.info(f"🌐 使用代理: {proxy_url}")
+        
         # 创建应用
-        self.app = Application.builder().token(bot_token).build()
+        try:
+            builder = Application.builder().token(bot_token)
+            if proxy_url:
+                builder = builder.proxy_url(proxy_url).get_updates_proxy_url(proxy_url)
+            self.app = builder.build()
+        except Exception as e:
+            logger.error(f"❌ 创建 Telegram 应用失败: {e}")
+            return
         
         # 添加处理器
         self.app.add_handler(CommandHandler('start', self.handle_start))
@@ -283,10 +416,27 @@ class MusicBot:
         
         logger.info("🤖 Telegram Bot 启动中...")
         
-        # 运行
-        await self.app.initialize()
-        await self.app.start()
-        await self.app.updater.start_polling(drop_pending_updates=True)
+        # 运行，添加重试机制
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                await self.app.initialize()
+                await self.app.start()
+                await self.app.updater.start_polling(drop_pending_updates=True)
+                logger.info("✅ Telegram Bot 已启动")
+                break
+            except Exception as e:
+                retry_count += 1
+                logger.error(f"❌ Telegram Bot 启动失败 (尝试 {retry_count}/{max_retries}): {e}")
+                if retry_count < max_retries:
+                    logger.info(f"⏳ 等待 30 秒后重试...")
+                    await asyncio.sleep(30)
+                else:
+                    logger.error("❌ Telegram Bot 启动失败，请检查网络连接或代理设置")
+                    logger.info("💡 如果在中国大陆，请在 Web 界面配置代理")
+                    return
         
         logger.info("✅ Telegram Bot 已启动")
         

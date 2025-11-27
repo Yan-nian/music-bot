@@ -392,67 +392,55 @@ class NeteaseDownloader(BaseDownloader):
     # ============ 专辑/歌单 API ============
     
     def get_album_songs(self, album_id: str) -> List[Dict[str, Any]]:
-        """获取专辑歌曲列表"""
+        """获取专辑歌曲列表 - 参考原项目实现"""
         try:
-            # 尝试方法1: /api/album/{id}
+            # 使用原项目的 API: /api/album/{id}
             url = f"{self.api_url}/api/album/{album_id}"
-            logger.info(f"💿 获取专辑歌曲 (方法1): {url}")
+            logger.info(f"💿 获取专辑歌曲: {url}")
             
             response = self.session.get(url, timeout=15)
             response.raise_for_status()
             data = response.json()
             
-            logger.info(f"💿 专辑API响应: code={data.get('code')}, 有album={bool(data.get('album'))}, 有songs={bool(data.get('songs'))}")
+            logger.info(f"💿 API响应: code={data.get('code')}")
             
-            if data.get('code') == 200:
-                album_info = data.get('album', {})
-                songs = data.get('songs', [])
+            if data.get('code') == 200 and data.get('album'):
+                album_info = data['album']
+                # 关键修复: songs 在 album 对象内部，而不是顶层
+                songs = album_info.get('songs', [])
+                album_name = album_info.get('name', '')
+                album_cover = album_info.get('picUrl', '')
+                
+                logger.info(f"💿 专辑: {album_name}, 歌曲数: {len(songs)}")
                 
                 if songs:
                     result = []
                     for i, song in enumerate(songs, 1):
-                        artists = song.get('artists', []) or song.get('ar', [])
+                        # 原项目使用 'artists' 字段
+                        artists = song.get('artists', [])
+                        if artists:
+                            # 只取第一个艺术家，避免多艺术家问题
+                            artist_name = artists[0].get('name', '未知')
+                        else:
+                            artist_name = '未知'
+                        
                         result.append({
                             'id': str(song['id']),
-                            'name': song['name'],
-                            'artist': ', '.join([a['name'] for a in artists]) if artists else '未知',
-                            'album': album_info.get('name', ''),
-                            'track_number': i,
-                            'cover': album_info.get('picUrl', ''),
+                            'name': song.get('name', '未知'),
+                            'artist': artist_name,
+                            'album': album_name,
+                            'track_number': song.get('no', i),  # 使用曲目编号
+                            'cover': album_cover,
+                            'duration': song.get('duration', 0) // 1000,  # 转换为秒
                         })
                     
-                    logger.info(f"✅ 获取专辑歌曲: {len(result)} 首")
+                    logger.info(f"✅ 获取专辑歌曲成功: {len(result)} 首")
                     return result
+                else:
+                    logger.warning(f"⚠️ 专辑 {album_name} 中没有歌曲")
+            else:
+                logger.error(f"❌ API返回错误: {data.get('msg', data.get('message', '未知'))}")
             
-            # 尝试方法2: /api/v1/album/{id}
-            logger.info(f"⚠️ 方法1失败，尝试方法2")
-            url2 = f"{self.api_url}/api/v1/album/{album_id}"
-            response2 = self.session.get(url2, timeout=15)
-            data2 = response2.json()
-            
-            logger.info(f"💿 专辑API(v1)响应: code={data2.get('code')}")
-            
-            if data2.get('code') == 200:
-                songs = data2.get('songs', [])
-                album_info = data2.get('album', {})
-                
-                if songs:
-                    result = []
-                    for i, song in enumerate(songs, 1):
-                        artists = song.get('ar', []) or song.get('artists', [])
-                        result.append({
-                            'id': str(song['id']),
-                            'name': song['name'],
-                            'artist': ', '.join([a['name'] for a in artists]) if artists else '未知',
-                            'album': album_info.get('name', ''),
-                            'track_number': i,
-                            'cover': album_info.get('picUrl', ''),
-                        })
-                    
-                    logger.info(f"✅ 获取专辑歌曲(v1): {len(result)} 首")
-                    return result
-            
-            logger.warning(f"⚠️ 无法获取专辑歌曲: {album_id}")
             return []
             
         except Exception as e:

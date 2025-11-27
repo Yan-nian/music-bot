@@ -46,6 +46,7 @@ class ConfigManager:
         "netease_album_folder_format": "{AlbumName}({ReleaseDate})",
         "netease_song_file_format": "{SongName}",
         "netease_cookies": "",
+        "netease_api_url": "",  # 自定义 API 地址，留空使用默认
         
         # Apple Music 配置
         "apple_music_enabled": True,

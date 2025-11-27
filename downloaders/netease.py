@@ -9,15 +9,26 @@ import os
 import re
 import json
 import time
+import base64
 import logging
 import requests
 from pathlib import Path
 from typing import Optional, Dict, List, Any, Callable
 from hashlib import md5
 
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad
+
 from .base import BaseDownloader
 
 logger = logging.getLogger(__name__)
+
+# 网易云加密参数
+WEAPI_SECRET_KEY = '0CoJUm6Qyw8W8jud'
+WEAPI_PUBLIC_KEY = '010001'
+WEAPI_MODULUS = '00e0b509f6259df8642dbc35662901477df22677ec152b5ff68ace615bb7b725152b3ab17a876aea8a5aa76d2e417629ec4ee341f56135fccf695280104e0312ecbda92557c93870114af6c9d05c4f7f0c3685b7a46bee255932575cce10b424d813cfe4875d3e82047b97ddef52741d546b8e289dc6935b3ece0462db0a22b8e7'
+WEAPI_NONCE = '0CoJUm6Qyw8W8jud'
+WEAPI_IV = '0102030405060708'
 
 
 class NeteaseDownloader(BaseDownloader):
@@ -101,6 +112,43 @@ class NeteaseDownloader(BaseDownloader):
         
         logger.info(f"📝 网易云配置: 音质={self.quality}, 歌词={self.download_lyrics}, 封面={self.download_cover}")
     
+    def _encrypt_request(self, data: Dict) -> Dict[str, str]:
+        """加密请求数据 (weapi)"""
+        try:
+            text = json.dumps(data)
+            
+            # 第一次 AES 加密
+            key1 = WEAPI_SECRET_KEY.encode('utf-8')
+            iv = WEAPI_IV.encode('utf-8')
+            cipher1 = AES.new(key1, AES.MODE_CBC, iv)
+            encrypted1 = cipher1.encrypt(pad(text.encode('utf-8'), AES.block_size))
+            encrypted1_b64 = base64.b64encode(encrypted1).decode('utf-8')
+            
+            # 第二次 AES 加密 (使用固定的随机密钥)
+            random_key = 'eBcWnHKsclDSrdzA'
+            key2 = random_key.encode('utf-8')
+            cipher2 = AES.new(key2, AES.MODE_CBC, iv)
+            encrypted2 = cipher2.encrypt(pad(encrypted1_b64.encode('utf-8'), AES.block_size))
+            params = base64.b64encode(encrypted2).decode('utf-8')
+            
+            # RSA 加密密钥
+            enc_sec_key = self._rsa_encrypt(random_key[::-1])
+            
+            return {
+                'params': params,
+                'encSecKey': enc_sec_key
+            }
+        except Exception as e:
+            logger.error(f"❌ 加密请求失败: {e}")
+            # 返回原始数据作为回退
+            return data
+    
+    def _rsa_encrypt(self, text: str) -> str:
+        """RSA 加密"""
+        text = text[::-1]
+        rs = pow(int(text.encode('utf-8').hex(), 16), int(WEAPI_PUBLIC_KEY, 16), int(WEAPI_MODULUS, 16))
+        return format(rs, 'x').zfill(256)
+
     def _load_cookies(self):
         """加载 cookies"""
         # 从配置获取 cookies
@@ -183,20 +231,29 @@ class NeteaseDownloader(BaseDownloader):
     def get_song_info(self, song_id: str) -> Optional[Dict[str, Any]]:
         """获取歌曲详情"""
         try:
-            url = f"{self.api_url}/api/v3/song/detail"
-            params = {'c': json.dumps([{'id': song_id}])}
+            # 使用 weapi 接口
+            url = f"{self.api_url}/weapi/v3/song/detail"
             
-            response = self.session.get(url, params=params, timeout=30)
+            # 构建请求数据
+            data = {
+                'c': json.dumps([{'id': song_id}]),
+                'ids': f'[{song_id}]'
+            }
+            
+            # 加密请求
+            encrypted_data = self._encrypt_request(data)
+            
+            response = self.session.post(url, data=encrypted_data, timeout=30)
             
             # 处理可能的 JSON 解析问题
             try:
-                data = response.json()
+                result = response.json()
             except json.JSONDecodeError as e:
                 logger.error(f"❌ JSON 解析失败: {e}, 响应内容: {response.text[:200]}")
                 return None
             
-            if data.get('code') == 200 and data.get('songs'):
-                song = data['songs'][0]
+            if result.get('code') == 200 and result.get('songs'):
+                song = result['songs'][0]
                 return {
                     'id': str(song['id']),
                     'name': song['name'],
@@ -209,6 +266,7 @@ class NeteaseDownloader(BaseDownloader):
                     'publish_time': song.get('publishTime'),
                 }
             
+            logger.warning(f"⚠️ 获取歌曲信息失败: {result.get('msg', '未知错误')}")
             return None
             
         except Exception as e:
@@ -221,18 +279,27 @@ class NeteaseDownloader(BaseDownloader):
             quality = quality or self.quality
             level = self.QUALITY_MAP.get(quality, 'lossless')
             
-            url = f"{self.api_url}/api/song/enhance/player/url/v1"
-            params = {
-                'ids': f'[{song_id}]',
+            # 使用 weapi 接口
+            url = f"{self.api_url}/weapi/song/enhance/player/url/v1"
+            
+            data = {
+                'ids': [int(song_id)],
                 'level': level,
-                'encodeType': 'flac' if level == 'lossless' else 'mp3',
+                'encodeType': 'flac' if level == 'lossless' else 'aac',
+                'csrf_token': ''
             }
             
-            response = self.session.get(url, params=params, timeout=30)
-            data = response.json()
+            encrypted_data = self._encrypt_request(data)
+            response = self.session.post(url, data=encrypted_data, timeout=30)
             
-            if data.get('code') == 200 and data.get('data'):
-                song_data = data['data'][0]
+            try:
+                result = response.json()
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ JSON 解析失败: {e}")
+                return None
+            
+            if result.get('code') == 200 and result.get('data'):
+                song_data = result['data'][0]
                 if song_data.get('url'):
                     return {
                         'url': song_data['url'],

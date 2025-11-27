@@ -186,22 +186,26 @@ class NeteaseDownloader(BaseDownloader):
             
             logger.info(f"🔗 重定向到: {final_url}")
             
-            # 从最终 URL 提取信息
+            # 从最终 URL 提取信息 - 支持多种格式
             if 'music.163.com' in final_url:
-                # 单曲
-                song_match = re.search(r'(?:#/song\?id=|/song\?.*?id=)(\d+)', final_url)
-                if song_match:
-                    return {'type': 'song', 'id': song_match.group(1), 'url': final_url}
+                # 提取 id 参数（通用方式）
+                id_match = re.search(r'[?&]id=(\d+)', final_url)
                 
-                # 专辑
-                album_match = re.search(r'(?:#/album\?id=|/album\?.*?id=)(\d+)', final_url)
-                if album_match:
-                    return {'type': 'album', 'id': album_match.group(1), 'url': final_url}
+                if id_match:
+                    content_id = id_match.group(1)
+                    
+                    # 判断类型
+                    if '/song' in final_url:
+                        return {'type': 'song', 'id': content_id, 'url': final_url}
+                    elif '/album' in final_url:
+                        return {'type': 'album', 'id': content_id, 'url': final_url}
+                    elif '/playlist' in final_url:
+                        return {'type': 'playlist', 'id': content_id, 'url': final_url}
                 
-                # 歌单
-                playlist_match = re.search(r'(?:#/playlist\?id=|/playlist\?.*?id=)(\d+)', final_url)
-                if playlist_match:
-                    return {'type': 'playlist', 'id': playlist_match.group(1), 'url': final_url}
+                # 备选：从 # 后的参数获取
+                hash_match = re.search(r'#/(song|album|playlist)\?id=(\d+)', final_url)
+                if hash_match:
+                    return {'type': hash_match.group(1), 'id': hash_match.group(2), 'url': final_url}
             
             return None
             
@@ -390,34 +394,71 @@ class NeteaseDownloader(BaseDownloader):
     def get_album_songs(self, album_id: str) -> List[Dict[str, Any]]:
         """获取专辑歌曲列表"""
         try:
+            # 尝试方法1: /api/album/{id}
             url = f"{self.api_url}/api/album/{album_id}"
+            logger.info(f"💿 获取专辑歌曲 (方法1): {url}")
             
             response = self.session.get(url, timeout=15)
             response.raise_for_status()
             data = response.json()
             
+            logger.info(f"💿 专辑API响应: code={data.get('code')}, 有album={bool(data.get('album'))}, 有songs={bool(data.get('songs'))}")
+            
             if data.get('code') == 200:
                 album_info = data.get('album', {})
                 songs = data.get('songs', [])
                 
-                result = []
-                for i, song in enumerate(songs, 1):
-                    result.append({
-                        'id': str(song['id']),
-                        'name': song['name'],
-                        'artist': ', '.join([a['name'] for a in song.get('artists', [])]),
-                        'album': album_info.get('name', ''),
-                        'track_number': i,
-                        'cover': album_info.get('picUrl', ''),
-                    })
-                
-                logger.info(f"✅ 获取专辑歌曲: {len(result)} 首")
-                return result
+                if songs:
+                    result = []
+                    for i, song in enumerate(songs, 1):
+                        artists = song.get('artists', []) or song.get('ar', [])
+                        result.append({
+                            'id': str(song['id']),
+                            'name': song['name'],
+                            'artist': ', '.join([a['name'] for a in artists]) if artists else '未知',
+                            'album': album_info.get('name', ''),
+                            'track_number': i,
+                            'cover': album_info.get('picUrl', ''),
+                        })
+                    
+                    logger.info(f"✅ 获取专辑歌曲: {len(result)} 首")
+                    return result
             
+            # 尝试方法2: /api/v1/album/{id}
+            logger.info(f"⚠️ 方法1失败，尝试方法2")
+            url2 = f"{self.api_url}/api/v1/album/{album_id}"
+            response2 = self.session.get(url2, timeout=15)
+            data2 = response2.json()
+            
+            logger.info(f"💿 专辑API(v1)响应: code={data2.get('code')}")
+            
+            if data2.get('code') == 200:
+                songs = data2.get('songs', [])
+                album_info = data2.get('album', {})
+                
+                if songs:
+                    result = []
+                    for i, song in enumerate(songs, 1):
+                        artists = song.get('ar', []) or song.get('artists', [])
+                        result.append({
+                            'id': str(song['id']),
+                            'name': song['name'],
+                            'artist': ', '.join([a['name'] for a in artists]) if artists else '未知',
+                            'album': album_info.get('name', ''),
+                            'track_number': i,
+                            'cover': album_info.get('picUrl', ''),
+                        })
+                    
+                    logger.info(f"✅ 获取专辑歌曲(v1): {len(result)} 首")
+                    return result
+            
+            logger.warning(f"⚠️ 无法获取专辑歌曲: {album_id}")
             return []
             
         except Exception as e:
             logger.error(f"❌ 获取专辑歌曲失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return []
     
     def get_playlist_songs(self, playlist_id: str) -> List[Dict[str, Any]]:

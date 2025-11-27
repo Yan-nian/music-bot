@@ -31,13 +31,14 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push Docker image
+        id: docker_build
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./Dockerfile
+          context: ./music_bot
+          file: ./music_bot/Dockerfile
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/music-bot:latest
           platforms: linux/amd64,linux/arm64
 
       - name: Image digest
-        run: echo "Image digest: ${{ steps.docker_build.outputs.digest }}"
+        run: echo "Image digest ${{ steps.docker_build.outputs.digest }}"

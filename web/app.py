@@ -33,9 +33,10 @@ def init_app(db_path: str = None):
     config_manager = get_config_manager(db_path)
     
     # 注册 Telegram Setup Blueprint
-    from .tg_setup import tg_setup_bp, init_tg_setup
+    from .tg_setup import create_tg_setup_blueprint, init_tg_setup
+    tg_setup_bp = create_tg_setup_blueprint()
     init_tg_setup(config_manager)
-    app.register_blueprint(tg_setup_bp, url_prefix='/tg')
+    app.register_blueprint(tg_setup_bp)
     
     return app
 

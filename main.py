@@ -124,7 +124,7 @@ class MusicBot:
             "*命令：*\n"
             "/start - 显示帮助\n"
             "/status - 查看状态\n"
-            "/settings - 配置设置\n"
+            "/history - 查看下载历史\n"
         )
         await update.message.reply_text(welcome_msg, parse_mode=ParseMode.MARKDOWN)
     
@@ -140,6 +140,34 @@ class MusicBot:
         
         await update.message.reply_text('\n'.join(status_lines), parse_mode=ParseMode.MARKDOWN)
     
+    async def handle_history(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理 /history 命令 - 显示下载历史"""
+        history = self.config_manager.get_download_history(limit=20)
+        
+        if not history:
+            await update.message.reply_text("📭 暂无下载历史")
+            return
+        
+        lines = ["📜 *最近下载历史*\n"]
+        
+        for i, item in enumerate(history, 1):
+            platform = item.get('platform', '未知')
+            content_type = item.get('content_type', '')
+            title = item.get('title', '未知')
+            artist = item.get('artist', '')
+            created_at = item.get('created_at', '')[:16]  # 只显示日期和时间
+            
+            # 平台图标
+            platform_icon = {'netease': '🎵', 'apple_music': '🍎', 'youtube_music': '▶️'}.get(platform, '📀')
+            type_icon = {'song': '🎵', 'album': '💿', 'playlist': '📋'}.get(content_type, '📁')
+            
+            lines.append(f"{i}. {platform_icon}{type_icon} *{title}*")
+            if artist:
+                lines.append(f"   _{artist}_")
+            lines.append(f"   🕐 {created_at}\n")
+        
+        await update.message.reply_text('\n'.join(lines), parse_mode=ParseMode.MARKDOWN)
+
     def get_download_path_for_platform(self, platform: str) -> str:
         """获取平台专属的下载路径"""
         platform_paths = {
@@ -174,33 +202,83 @@ class MusicBot:
         
         downloader_name, downloader = result
         
+        # 解析 URL
+        parsed = downloader.parse_url(url)
+        if not parsed:
+            await update.message.reply_text("❌ 无法解析链接")
+            return
+        
+        content_type = parsed.get('type')
+        content_id = parsed.get('id')
+        
+        # 检查是否已下载过
+        existing = self.config_manager.check_download_exists(downloader_name, content_type, content_id)
+        if existing:
+            # 已下载过，询问是否重新下载
+            download_time = existing.get('created_at', '未知时间')
+            title = existing.get('title', '未知')
+            
+            keyboard = [
+                [
+                    InlineKeyboardButton("✅ 重新下载", callback_data=f"redownload:{downloader_name}:{content_type}:{content_id}"),
+                    InlineKeyboardButton("❌ 取消", callback_data="cancel_download")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(
+                f"⚠️ 此内容之前已下载过\n\n"
+                f"📀 {title}\n"
+                f"📍 平台: {downloader_name}\n"
+                f"🕐 下载时间: {download_time}\n\n"
+                f"是否重新下载？",
+                reply_markup=reply_markup
+            )
+            return
+        
+        # 未下载过，直接开始下载
+        await self._do_download(update.message, downloader_name, downloader, content_type, content_id)
+    
+    async def handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理回调查询（按钮点击）"""
+        query = update.callback_query
+        await query.answer()
+        
+        data = query.data
+        
+        if data == "cancel_download":
+            await query.edit_message_text("❌ 已取消下载")
+            return
+        
+        if data.startswith("redownload:"):
+            # 解析重新下载的数据
+            parts = data.split(":")
+            if len(parts) == 4:
+                _, downloader_name, content_type, content_id = parts
+                
+                # 获取下载器
+                downloader = self.downloaders.get(downloader_name)
+                if downloader:
+                    await query.edit_message_text(f"🔄 开始重新下载...")
+                    await self._do_download(query.message, downloader_name, downloader, content_type, content_id, is_redownload=True)
+                else:
+                    await query.edit_message_text("❌ 下载器不可用")
+            return
+    
+    async def _do_download(self, message, downloader_name: str, downloader, content_type: str, content_id: str, is_redownload: bool = False):
+        """执行下载任务"""
         # 发送处理中消息
-        progress_msg = await update.message.reply_text(
-            f"🎵 正在处理 {downloader_name} 链接...\n请稍候..."
+        progress_msg = await message.reply_text(
+            f"🎵 {'重新' if is_redownload else '正在'}下载 {content_type}...\n"
+            f"📍 平台: {downloader_name}\n"
+            f"🔗 ID: {content_id}"
         )
         
         try:
-            # 解析 URL
-            parsed = downloader.parse_url(url)
-            if not parsed:
-                await progress_msg.edit_text("❌ 无法解析链接")
-                return
-            
-            content_type = parsed.get('type')
-            content_id = parsed.get('id')
-            
-            # 更新进度消息
-            await progress_msg.edit_text(
-                f"🎵 正在下载 {content_type}...\n"
-                f"📍 平台: {downloader_name}\n"
-                f"🔗 ID: {content_id}"
-            )
-            
             # 使用平台专属下载路径
             download_dir = self.get_download_path_for_platform(downloader_name)
             
             # 创建进度回调 - 用于动态更新进度
-            downloaded_songs = []
             last_update_time = [0]  # 使用列表以便在闭包中修改
             
             async def update_progress_message(progress_text: str):
@@ -239,7 +317,6 @@ class MusicBot:
                         pass
             
             # 下载
-            
             if content_type == 'song':
                 result = downloader.download_song(content_id, download_dir, progress_callback=sync_progress_callback)
             elif content_type == 'album':
@@ -249,9 +326,21 @@ class MusicBot:
             else:
                 result = {'success': False, 'error': f'不支持的类型: {content_type}'}
             
-            # 只保存到本地，不发送到 Telegram
+            # 处理结果
             if result.get('success'):
+                # 保存下载历史
                 if content_type == 'song':
+                    self.config_manager.add_download_history(
+                        platform=downloader_name,
+                        content_type=content_type,
+                        content_id=content_id,
+                        title=result.get('song_title', '未知'),
+                        artist=result.get('song_artist', '未知'),
+                        file_path=result.get('filepath', ''),
+                        file_size=int(result.get('size_mb', 0) * 1024 * 1024),
+                        quality=result.get('quality', '')
+                    )
+                    
                     filepath = result.get('filepath', '')
                     await progress_msg.edit_text(
                         f"✅ 下载完成！\n\n"
@@ -268,6 +357,19 @@ class MusicBot:
                     success_songs = [s for s in songs_list if s.get('success')]
                     failed_songs = [s for s in songs_list if not s.get('success')]
                     
+                    # 保存专辑/歌单下载历史
+                    title = result.get('album_name', result.get('playlist_title', '未知'))
+                    self.config_manager.add_download_history(
+                        platform=downloader_name,
+                        content_type=content_type,
+                        content_id=content_id,
+                        title=title,
+                        artist=f"{len(success_songs)} 首歌曲",
+                        file_path=download_dir,
+                        file_size=len(success_songs),
+                        quality=f"{len(success_songs)}/{result.get('total_songs', 0)}"
+                    )
+                    
                     # 成功的歌曲列表（最多显示20首）
                     song_lines = []
                     for i, song in enumerate(success_songs[:20], 1):
@@ -277,7 +379,6 @@ class MusicBot:
                         song_lines.append(f"  ... 还有 {len(success_songs) - 20} 首")
                     
                     # 构建完整消息
-                    title = result.get('album_name', result.get('playlist_title', '未知'))
                     summary = (
                         f"✅ 下载完成！\n\n"
                         f"📀 {title}\n"
@@ -394,6 +495,8 @@ class MusicBot:
         self.app.add_handler(CommandHandler('start', self.handle_start))
         self.app.add_handler(CommandHandler('help', self.handle_start))
         self.app.add_handler(CommandHandler('status', self.handle_status))
+        self.app.add_handler(CommandHandler('history', self.handle_history))
+        self.app.add_handler(CallbackQueryHandler(self.handle_callback_query))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         
         logger.info("🤖 Telegram Bot 启动中...")

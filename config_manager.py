@@ -352,6 +352,27 @@ class ConfigManager:
             logger.error(f"❌ 获取下载历史失败: {e}")
             return []
     
+    def check_download_exists(self, platform: str, content_type: str, content_id: str) -> Optional[Dict[str, Any]]:
+        """检查是否已下载过此内容"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT * FROM download_history 
+                    WHERE platform = ? AND content_type = ? AND content_id = ?
+                    ORDER BY created_at DESC LIMIT 1
+                """, (platform, content_type, content_id))
+                
+                row = cursor.fetchone()
+                if row:
+                    columns = [description[0] for description in cursor.description]
+                    return dict(zip(columns, row))
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ 检查下载历史失败: {e}")
+            return None
+
     def get_config_by_category(self, category: str) -> Dict[str, Any]:
         """按类别获取配置"""
         all_config = self.get_all_config()

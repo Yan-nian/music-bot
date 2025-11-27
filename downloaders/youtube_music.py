@@ -240,12 +240,29 @@ class YouTubeMusicDownloader(BaseDownloader):
                     actual_file = Path(filename).with_suffix(f'.{self.format}')
                     
                     if actual_file.exists():
+                        # 计算时长格式
+                        duration_sec = info.get('duration', 0)
+                        if duration_sec:
+                            minutes = int(duration_sec) // 60
+                            seconds = int(duration_sec) % 60
+                            duration_str = f"{minutes}:{seconds:02d}"
+                        else:
+                            duration_str = '未知'
+                        
+                        # 获取码率信息
+                        abr = info.get('abr', 0)
+                        bitrate_str = f"{int(abr)}kbps" if abr else '320kbps'
+                        
                         return {
                             'success': True,
                             'song_title': info.get('title', ''),
                             'song_artist': info.get('artist', info.get('uploader', '')),
                             'filepath': str(actual_file),
                             'size_mb': actual_file.stat().st_size / (1024 * 1024),
+                            'quality': '高品质' if self.quality == 'best' else self.quality,
+                            'bitrate': bitrate_str,
+                            'duration': duration_str,
+                            'file_format': self.format.upper(),
                         }
             
             return {'success': False, 'error': '下载失败'}
@@ -313,6 +330,9 @@ class YouTubeMusicDownloader(BaseDownloader):
                 'total_songs': playlist_info.get('total_videos', 0),
                 'downloaded_songs': 0,
                 'songs': [],
+                'quality_name': '高品质' if self.quality == 'best' else self.quality,
+                'bitrate': '320kbps',
+                'file_format': self.format.upper(),
             }
             
             entries = playlist_info.get('entries', [])
@@ -333,6 +353,11 @@ class YouTubeMusicDownloader(BaseDownloader):
                 
                 if result.get('success'):
                     results['downloaded_songs'] += 1
+                    # 更新码率和格式信息
+                    if result.get('bitrate'):
+                        results['bitrate'] = result.get('bitrate')
+                    if result.get('file_format'):
+                        results['file_format'] = result.get('file_format')
             
             return results
             

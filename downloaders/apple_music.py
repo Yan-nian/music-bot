@@ -299,6 +299,19 @@ class AppleMusicDownloader(BaseDownloader):
                 if files:
                     result["files"] = files
                     result["file_count"] = len(files)
+                    
+                    # 获取文件信息用于新通知格式
+                    first_file = Path(files[0])
+                    file_size_mb = first_file.stat().st_size / (1024 * 1024) if first_file.exists() else 0
+                    
+                    result["song_title"] = first_file.stem
+                    result["song_artist"] = "未知艺术家"
+                    result["filepath"] = str(first_file)
+                    result["size_mb"] = file_size_mb
+                    result["quality"] = self._get_quality_name()
+                    result["bitrate"] = self._get_bitrate_str()
+                    result["duration"] = "未知"
+                    result["file_format"] = first_file.suffix.upper().replace(".", "")
 
                     # 应用元数据（如果需要）
                     for file_path in files:
@@ -336,8 +349,27 @@ class AppleMusicDownloader(BaseDownloader):
                 if files:
                     result["files"] = files
                     result["file_count"] = len(files)
-
+                    
+                    # 添加新通知格式需要的字段
+                    result["album_name"] = url_info.get("album_name", "未知专辑")
+                    result["artist"] = url_info.get("artist", "未知艺术家")
+                    result["total_songs"] = len(files)
+                    result["downloaded_songs"] = len(files)
+                    result["quality_name"] = self._get_quality_name()
+                    result["bitrate"] = self._get_bitrate_str()
+                    result["file_format"] = Path(files[0]).suffix.upper().replace(".", "") if files else "M4A"
+                    
+                    # 构建歌曲列表
+                    result["songs"] = []
                     for file_path in files:
+                        fp = Path(file_path)
+                        file_size_mb = fp.stat().st_size / (1024 * 1024) if fp.exists() else 0
+                        result["songs"].append({
+                            "success": True,
+                            "song_title": fp.stem,
+                            "filepath": str(fp),
+                            "size_mb": file_size_mb,
+                        })
                         await self._post_process_file(file_path)
 
             return result
@@ -373,8 +405,26 @@ class AppleMusicDownloader(BaseDownloader):
                 if files:
                     result["files"] = files
                     result["file_count"] = len(files)
-
+                    
+                    # 添加新通知格式需要的字段
+                    result["playlist_title"] = url_info.get("playlist_name", "未知歌单")
+                    result["total_songs"] = len(files)
+                    result["downloaded_songs"] = len(files)
+                    result["quality_name"] = self._get_quality_name()
+                    result["bitrate"] = self._get_bitrate_str()
+                    result["file_format"] = Path(files[0]).suffix.upper().replace(".", "") if files else "M4A"
+                    
+                    # 构建歌曲列表
+                    result["songs"] = []
                     for file_path in files:
+                        fp = Path(file_path)
+                        file_size_mb = fp.stat().st_size / (1024 * 1024) if fp.exists() else 0
+                        result["songs"].append({
+                            "success": True,
+                            "song_title": fp.stem,
+                            "filepath": str(fp),
+                            "size_mb": file_size_mb,
+                        })
                         await self._post_process_file(file_path)
 
             return result
@@ -592,6 +642,28 @@ class AppleMusicDownloader(BaseDownloader):
                 callback(data)
         except Exception as e:
             logger.warning(f"回调函数执行失败: {e}")
+
+    def _get_quality_name(self) -> str:
+        """根据配置返回音质名称"""
+        quality = self.quality.lower() if self.quality else "aac-256"
+        quality_map = {
+            "aac-256": "AAC 256kbps",
+            "aac-128": "AAC 128kbps",
+            "alac": "无损 ALAC",
+            "flac": "无损 FLAC",
+        }
+        return quality_map.get(quality, quality.upper())
+
+    def _get_bitrate_str(self) -> str:
+        """根据配置返回码率字符串"""
+        quality = self.quality.lower() if self.quality else "aac-256"
+        bitrate_map = {
+            "aac-256": "256kbps",
+            "aac-128": "128kbps",
+            "alac": "无损",
+            "flac": "无损",
+        }
+        return bitrate_map.get(quality, "256kbps")
 
     async def get_song_info(self, url: str) -> Optional[Dict[str, Any]]:
         """

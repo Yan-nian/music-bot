@@ -300,12 +300,22 @@ class MusicBot:
                     total = progress_info.get('total', 0)
                     song_name = progress_info.get('song', '')
                     
-                    # 记录正在下载的歌曲
+                    # 创建进度条
+                    bar_length = 20
+                    if total > 0:
+                        filled_length = int(bar_length * current / total)
+                        percentage = current / total * 100
+                    else:
+                        filled_length = 0
+                        percentage = 0
+                    progress_bar = '█' * filled_length + '░' * (bar_length - filled_length)
+                    
+                    # 构建进度消息 - 参考原项目格式
                     progress_text = (
-                        f"📥 正在下载...\n\n"
-                        f"📊 进度: {current}/{total}\n"
-                        f"🎵 当前: {song_name}\n\n"
-                        f"{'▓' * int(current/total*10)}{'░' * (10-int(current/total*10))} {int(current/total*100)}%"
+                        f"📥 下载中\n\n"
+                        f"📝 当前: {song_name}\n"
+                        f"📊 进度: {current}/{total} 首\n\n"
+                        f"{progress_bar} {percentage:.1f}%"
                     )
                     
                     # 使用 asyncio 调度更新
@@ -327,7 +337,7 @@ class MusicBot:
                 result = {'success': False, 'error': f'不支持的类型: {content_type}'}
             
             # 处理结果
-            if result.get('success'):
+                if result.get('success'):
                 # 保存下载历史
                 if content_type == 'song':
                     self.config_manager.add_download_history(
@@ -341,17 +351,21 @@ class MusicBot:
                         quality=result.get('quality', '')
                     )
                     
+                    # 平台图标
+                    platform_icon = {'netease': '🎵', 'apple_music': '🍎', 'youtube_music': '▶️'}.get(downloader_name, '🎵')
+                    
                     filepath = result.get('filepath', '')
-                    await progress_msg.edit_text(
-                        f"✅ 下载完成！\n\n"
-                        f"🎵 {result.get('song_title', '未知')}\n"
-                        f"🎤 {result.get('song_artist', '未知')}\n"
-                        f"💾 {result.get('size_mb', 0):.2f} MB\n"
-                        f"🎚️ 音质: {result.get('quality', '未知')}\n\n"
-                        f"📂 已保存到:\n{filepath}"
+                    # 参考原项目格式 - 单曲下载完成
+                    success_msg = (
+                        f"{platform_icon} 音乐下载完成\n\n"
+                        f"🎵 音乐: {result.get('song_title', '未知')} - {result.get('song_artist', '未知')}\n"
+                        f"💾 大小: {result.get('size_mb', 0):.2f}MB\n"
+                        f"🖼️ 码率: {result.get('bitrate', '未知')}\n"
+                        f"🎚️ 音质: {result.get('quality', '未知')}\n"
+                        f"⏱️ 时长: {result.get('duration', '未知')}\n"
+                        f"📂 保存位置: {filepath}"
                     )
-                
-                elif content_type in ['album', 'playlist']:
+                    await progress_msg.edit_text(success_msg)                elif content_type in ['album', 'playlist']:
                     # 构建歌曲列表
                     songs_list = result.get('songs', [])
                     success_songs = [s for s in songs_list if s.get('success')]
@@ -359,46 +373,77 @@ class MusicBot:
                     
                     # 保存专辑/歌单下载历史
                     title = result.get('album_name', result.get('playlist_title', '未知'))
+                    artist_name = result.get('artist', '未知艺术家')
                     self.config_manager.add_download_history(
                         platform=downloader_name,
                         content_type=content_type,
                         content_id=content_id,
                         title=title,
-                        artist=f"{len(success_songs)} 首歌曲",
+                        artist=artist_name,
                         file_path=download_dir,
                         file_size=len(success_songs),
                         quality=f"{len(success_songs)}/{result.get('total_songs', 0)}"
                     )
                     
-                    # 成功的歌曲列表（最多显示20首）
+                    # 平台图标
+                    platform_icon = {'netease': '🎵', 'apple_music': '🍎', 'youtube_music': '▶️'}.get(downloader_name, '🎵')
+                    type_label = '专辑' if content_type == 'album' else '歌单'
+                    
+                    # 计算总大小
+                    total_size_mb = sum(s.get('size_mb', 0) for s in success_songs if s.get('size_mb'))
+                    
+                    # 获取音质信息
+                    quality_name = result.get('quality_name', result.get('quality', '未知'))
+                    bitrate = result.get('bitrate', '未知')
+                    file_format = result.get('file_format', 'MP3')
+                    
+                    # 构建成功的歌曲列表（参考原项目格式）
                     song_lines = []
-                    for i, song in enumerate(success_songs[:20], 1):
-                        song_lines.append(f"  {i}. {song.get('song_title', '未知')} - {song.get('song_artist', '未知')}")
+                    for i, song in enumerate(success_songs[:15], 1):
+                        song_title = song.get('song_title', '未知')
+                        song_size = song.get('size_mb', 0)
+                        song_lines.append(f"{i:02d}. {song_title} ({song_size:.1f}MB)")
                     
-                    if len(success_songs) > 20:
-                        song_lines.append(f"  ... 还有 {len(success_songs) - 20} 首")
+                    if len(success_songs) > 15:
+                        song_lines.append(f"... 还有 {len(success_songs) - 15} 首歌曲")
                     
-                    # 构建完整消息
-                    summary = (
-                        f"✅ 下载完成！\n\n"
-                        f"📀 {title}\n"
-                        f"📊 成功: {len(success_songs)}/{result.get('total_songs', 0)} 首\n"
+                    # 构建完整消息 - 参考原项目格式
+                    summary = f"{platform_icon} {type_label}下载完成\n\n"
+                    
+                    if content_type == 'album':
+                        summary += f"📀 专辑名称: {title}\n"
+                        if artist_name != '未知艺术家':
+                            summary += f"👤 艺术家: {artist_name}\n"
+                    else:
+                        summary += f"📋 歌单名称: {title}\n"
+                    
+                    summary += (
+                        f"🎵 歌曲数量: {result.get('total_songs', len(success_songs))} 首\n"
+                        f"✅ 成功下载: {len(success_songs)} 首\n"
                     )
                     
                     if failed_songs:
-                        summary += f"❌ 失败: {len(failed_songs)} 首\n"
+                        summary += f"❌ 失败数量: {len(failed_songs)} 首\n"
                     
-                    summary += f"\n📂 保存位置: {download_dir}\n"
+                    summary += (
+                        f"💾 总大小: {total_size_mb:.1f} MB\n"
+                        f"🎚️ 音质: {quality_name}\n"
+                        f"🎼 文件格式: {file_format}\n"
+                        f"📊 码率: {bitrate}\n"
+                        f"📂 保存位置: {download_dir}\n"
+                    )
                     
                     # 添加歌曲列表
                     if song_lines:
-                        summary += f"\n🎵 下载的歌曲:\n" + "\n".join(song_lines)
+                        summary += "\n🎵 歌曲列表:\n\n" + "\n".join(song_lines)
                     
                     # 如果有失败的歌曲，列出失败原因
                     if failed_songs and len(failed_songs) <= 5:
-                        summary += f"\n\n❌ 失败的歌曲:\n"
+                        summary += "\n\n❌ 下载失败的歌曲:\n"
                         for song in failed_songs[:5]:
-                            summary += f"  • {song.get('error', '未知错误')}\n"
+                            song_name = song.get('song_title', '未知')
+                            error = song.get('error', '未知错误')
+                            summary += f"  • {song_name}: {error}\n"
                     
                     await progress_msg.edit_text(summary)
                 else:
@@ -426,20 +471,29 @@ class MusicBot:
         
         return None
     
-    def _format_success_message(self, result: Dict[str, Any], content_type: str) -> str:
-        """格式化成功消息"""
+    def _format_success_message(self, result: Dict[str, Any], content_type: str, platform: str = '') -> str:
+        """格式化成功消息 - 参考原项目格式"""
+        platform_icon = {'netease': '🎵', 'apple_music': '🍎', 'youtube_music': '▶️'}.get(platform, '🎵')
+        
         if content_type == 'song':
             return (
-                f"✅ 下载完成！\n\n"
-                f"🎵 {result.get('song_title', '未知')}\n"
-                f"🎤 {result.get('song_artist', '未知')}\n"
-                f"💾 {result.get('size_mb', 0):.2f} MB"
+                f"{platform_icon} 音乐下载完成\n\n"
+                f"🎵 音乐: {result.get('song_title', '未知')} - {result.get('song_artist', '未知')}\n"
+                f"💾 大小: {result.get('size_mb', 0):.2f}MB\n"
+                f"🖼️ 码率: {result.get('bitrate', '未知')}\n"
+                f"🎚️ 音质: {result.get('quality', '未知')}\n"
+                f"⏱️ 时长: {result.get('duration', '未知')}\n"
+                f"📂 保存位置: {result.get('filepath', '未知')}"
             )
         elif content_type in ['album', 'playlist']:
+            type_label = '专辑' if content_type == 'album' else '歌单'
             return (
-                f"✅ 下载完成！\n\n"
-                f"📀 {result.get('album_name', result.get('playlist_title', '未知'))}\n"
-                f"📊 {result.get('downloaded_songs', 0)}/{result.get('total_songs', 0)} 首"
+                f"{platform_icon} {type_label}下载完成\n\n"
+                f"📀 名称: {result.get('album_name', result.get('playlist_title', '未知'))}\n"
+                f"🎵 歌曲数量: {result.get('total_songs', 0)} 首\n"
+                f"✅ 成功下载: {result.get('downloaded_songs', 0)} 首\n"
+                f"💾 总大小: {result.get('total_size_mb', 0):.1f} MB\n"
+                f"📂 保存位置: {result.get('download_path', '未知')}"
             )
         else:
             return "✅ 下载完成！"

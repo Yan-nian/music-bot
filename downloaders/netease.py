@@ -553,13 +553,31 @@ class NeteaseDownloader(BaseDownloader):
                     if not os.path.exists(cover_path):
                         self._download_file(song_info['cover'], cover_path)
                 
+                # 计算时长格式
+                duration_sec = song_info.get('duration', 0)
+                if duration_sec:
+                    minutes = duration_sec // 60
+                    seconds = duration_sec % 60
+                    duration_str = f"{minutes}:{seconds:02d}"
+                else:
+                    duration_str = '未知'
+                
+                # 获取码率和音质信息
+                br = song_url_info.get('br', 0)
+                bitrate_str = f"{br // 1000}kbps" if br else '未知'
+                file_type = song_url_info.get('type', 'mp3').upper()
+                quality_name = self._get_quality_name(br)
+                
                 return {
                     'success': True,
                     'song_title': song_info['name'],
                     'song_artist': song_info['artist'],
                     'filepath': filepath,
                     'size_mb': file_size / (1024 * 1024),
-                    'quality': f"{song_url_info.get('br', 0) // 1000}k",
+                    'quality': quality_name,
+                    'bitrate': bitrate_str,
+                    'duration': duration_str,
+                    'file_format': file_type,
                 }
             
             return {'success': False, 'error': '下载失败'}
@@ -577,12 +595,20 @@ class NeteaseDownloader(BaseDownloader):
         if not songs:
             return {'success': False, 'error': '无法获取专辑歌曲'}
         
+        # 获取专辑信息
+        album_name = songs[0].get('album', '') if songs else '未知专辑'
+        artist_name = songs[0].get('artist', '未知艺术家') if songs else '未知艺术家'
+        
         results = {
             'success': True,
-            'album_name': songs[0].get('album', ''),
+            'album_name': album_name,
+            'artist': artist_name,
             'total_songs': len(songs),
             'downloaded_songs': 0,
             'songs': [],
+            'quality_name': self.quality,
+            'bitrate': '未知',
+            'file_format': 'MP3',
         }
         
         for i, song in enumerate(songs, 1):
@@ -599,6 +625,11 @@ class NeteaseDownloader(BaseDownloader):
             
             if result.get('success'):
                 results['downloaded_songs'] += 1
+                # 更新码率和格式信息
+                if result.get('bitrate') and results.get('bitrate') == '未知':
+                    results['bitrate'] = result.get('bitrate')
+                if result.get('file_format'):
+                    results['file_format'] = result.get('file_format')
             
             time.sleep(0.5)  # 避免请求过快
         
@@ -616,9 +647,13 @@ class NeteaseDownloader(BaseDownloader):
         results = {
             'success': True,
             'playlist_id': playlist_id,
+            'playlist_title': '歌单',  # 如有歌单名称可在此获取
             'total_songs': len(songs),
             'downloaded_songs': 0,
             'songs': [],
+            'quality_name': self.quality,
+            'bitrate': '未知',
+            'file_format': 'MP3',
         }
         
         for i, song in enumerate(songs, 1):
@@ -635,10 +670,28 @@ class NeteaseDownloader(BaseDownloader):
             
             if result.get('success'):
                 results['downloaded_songs'] += 1
+                # 更新码率和格式信息
+                if result.get('bitrate') and results.get('bitrate') == '未知':
+                    results['bitrate'] = result.get('bitrate')
+                if result.get('file_format'):
+                    results['file_format'] = result.get('file_format')
             
             time.sleep(0.5)
         
         return results
+    
+    def _get_quality_name(self, bitrate: int) -> str:
+        """根据码率返回音质名称"""
+        if bitrate >= 900000:
+            return '无损'
+        elif bitrate >= 320000:
+            return '极高'
+        elif bitrate >= 192000:
+            return '较高'
+        elif bitrate >= 128000:
+            return '标准'
+        else:
+            return '未知'
     
     def _build_filename(self, song_info: Dict, ext: str) -> str:
         """构建文件名"""

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 网易云音乐下载器
-精简版 - 专注于音乐下载功能
+使用公开 API 实现
 """
 
 import os
@@ -12,23 +12,16 @@ import time
 import base64
 import logging
 import requests
+import hashlib
+import binascii
 from pathlib import Path
 from typing import Optional, Dict, List, Any, Callable
-from hashlib import md5
 
 from Crypto.Cipher import AES
-from Crypto.Util.Padding import pad
 
 from .base import BaseDownloader
 
 logger = logging.getLogger(__name__)
-
-# 网易云加密参数
-WEAPI_SECRET_KEY = '0CoJUm6Qyw8W8jud'
-WEAPI_PUBLIC_KEY = '010001'
-WEAPI_MODULUS = '00e0b509f6259df8642dbc35662901477df22677ec152b5ff68ace615bb7b725152b3ab17a876aea8a5aa76d2e417629ec4ee341f56135fccf695280104e0312ecbda92557c93870114af6c9d05c4f7f0c3685b7a46bee255932575cce10b424d813cfe4875d3e82047b97ddef52741d546b8e289dc6935b3ece0462db0a22b8e7'
-WEAPI_NONCE = '0CoJUm6Qyw8W8jud'
-WEAPI_IV = '0102030405060708'
 
 
 class NeteaseDownloader(BaseDownloader):
@@ -49,47 +42,34 @@ class NeteaseDownloader(BaseDownloader):
             r'music\.163\.com.*playlist\?id=(\d+)',
             r'music\.163\.com.*playlist/(\d+)',
         ],
-        'artist': [
-            r'music\.163\.com.*artist\?id=(\d+)',
-            r'music\.163\.com.*artist/(\d+)',
-        ],
     }
     
     # 音质映射
     QUALITY_MAP = {
         '标准': 'standard',
-        '较高': 'higher',
-        '极高': 'exhigh',
-        '无损': 'lossless',
+        '较高': 'exhigh',
+        '极高': 'lossless',
+        '无损': 'hires',
         'standard': 'standard',
-        'higher': 'higher',
         'exhigh': 'exhigh',
         'lossless': 'lossless',
-        '128k': 'standard',
-        '320k': 'higher',
-        'flac': 'lossless',
-    }
-    
-    QUALITY_LEVELS = {
-        'standard': {'level': 'standard', 'bitrate': 128000},
-        'higher': {'level': 'higher', 'bitrate': 320000},
-        'exhigh': {'level': 'exhigh', 'bitrate': 320000},
-        'lossless': {'level': 'lossless', 'bitrate': 0},
+        'hires': 'hires',
     }
     
     def __init__(self, config_manager=None):
         super().__init__(config_manager)
         
         self.session = requests.Session()
-        self.api_url = "https://music.163.com"
         
         # 设置请求头
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Referer': 'https://music.163.com/',
-            'Accept': 'application/json, text/plain, */*',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'Accept': '*/*',
             'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
             'Connection': 'keep-alive',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': 'https://music.163.com',
+            'Referer': 'https://music.163.com/',
         })
         
         # 加载配置
@@ -107,68 +87,26 @@ class NeteaseDownloader(BaseDownloader):
         self.download_cover = self.get_config('netease_download_cover', True)
         self.lyrics_merge = self.get_config('netease_lyrics_merge', False)
         self.dir_format = self.get_config('netease_dir_format', '{ArtistName}/{AlbumName}')
-        self.album_folder_format = self.get_config('netease_album_folder_format', '{AlbumName}({ReleaseDate})')
         self.song_file_format = self.get_config('netease_song_file_format', '{SongName}')
         
-        logger.info(f"📝 网易云配置: 音质={self.quality}, 歌词={self.download_lyrics}, 封面={self.download_cover}")
-    
-    def _encrypt_request(self, data: Dict) -> Dict[str, str]:
-        """加密请求数据 (weapi)"""
-        try:
-            text = json.dumps(data)
-            
-            # 第一次 AES 加密
-            key1 = WEAPI_SECRET_KEY.encode('utf-8')
-            iv = WEAPI_IV.encode('utf-8')
-            cipher1 = AES.new(key1, AES.MODE_CBC, iv)
-            encrypted1 = cipher1.encrypt(pad(text.encode('utf-8'), AES.block_size))
-            encrypted1_b64 = base64.b64encode(encrypted1).decode('utf-8')
-            
-            # 第二次 AES 加密 (使用固定的随机密钥)
-            random_key = 'eBcWnHKsclDSrdzA'
-            key2 = random_key.encode('utf-8')
-            cipher2 = AES.new(key2, AES.MODE_CBC, iv)
-            encrypted2 = cipher2.encrypt(pad(encrypted1_b64.encode('utf-8'), AES.block_size))
-            params = base64.b64encode(encrypted2).decode('utf-8')
-            
-            # RSA 加密密钥
-            enc_sec_key = self._rsa_encrypt(random_key[::-1])
-            
-            return {
-                'params': params,
-                'encSecKey': enc_sec_key
-            }
-        except Exception as e:
-            logger.error(f"❌ 加密请求失败: {e}")
-            # 返回原始数据作为回退
-            return data
-    
-    def _rsa_encrypt(self, text: str) -> str:
-        """RSA 加密"""
-        text = text[::-1]
-        rs = pow(int(text.encode('utf-8').hex(), 16), int(WEAPI_PUBLIC_KEY, 16), int(WEAPI_MODULUS, 16))
-        return format(rs, 'x').zfill(256)
+        logger.info(f"📝 网易云配置: 音质={self.quality}, 歌词={self.download_lyrics}")
 
     def _load_cookies(self):
         """加载 cookies"""
-        # 从配置获取 cookies
         cookies_str = self.get_config('netease_cookies', '')
         
         if cookies_str:
             self._parse_cookies(cookies_str)
             return
         
-        # 尝试从环境变量获取
         cookies_env = os.getenv('NCM_COOKIES', '')
         if cookies_env:
             self._parse_cookies(cookies_env)
             return
         
-        # 尝试从文件加载
         cookie_paths = [
             '/app/cookies/ncm_cookies.txt',
             './cookies/ncm_cookies.txt',
-            './ncm_cookies.txt',
         ]
         
         for path in cookie_paths:
@@ -188,12 +126,10 @@ class NeteaseDownloader(BaseDownloader):
         """解析 cookies 字符串"""
         try:
             if cookies_str.startswith('{'):
-                # JSON 格式
                 cookies_dict = json.loads(cookies_str)
                 for name, value in cookies_dict.items():
-                    self.session.cookies.set(name, value, domain='.music.163.com')
+                    self.session.cookies.set(name, str(value), domain='.music.163.com')
             else:
-                # 字符串格式
                 for cookie in cookies_str.split(';'):
                     if '=' in cookie:
                         name, value = cookie.strip().split('=', 1)
@@ -202,13 +138,48 @@ class NeteaseDownloader(BaseDownloader):
             logger.info(f"✅ 已加载 {len(self.session.cookies)} 个 cookies")
         except Exception as e:
             logger.error(f"❌ 解析 cookies 失败: {e}")
+
+    # ============ 加密相关 ============
+    
+    def _aes_encrypt(self, text: str, key: str) -> str:
+        """AES CBC 加密"""
+        iv = '0102030405060708'
+        cipher = AES.new(key.encode('utf-8'), AES.MODE_CBC, iv.encode('utf-8'))
+        pad_len = 16 - len(text.encode('utf-8')) % 16
+        text = text + chr(pad_len) * pad_len
+        encrypted = cipher.encrypt(text.encode('utf-8'))
+        return base64.b64encode(encrypted).decode('utf-8')
+    
+    def _rsa_encrypt(self, text: str) -> str:
+        """RSA 加密"""
+        e = '010001'
+        n = '00e0b509f6259df8642dbc35662901477df22677ec152b5ff68ace615bb7b725152b3ab17a876aea8a5aa76d2e417629ec4ee341f56135fccf695280104e0312ecbda92557c93870114af6c9d05c4f7f0c3685b7a46bee255932575cce10b424d813cfe4875d3e82047b97ddef52741d546b8e289dc6935b3ece0462db0a22b8e7'
+        text = text[::-1]
+        rs = pow(int(binascii.hexlify(text.encode('utf-8')), 16), int(e, 16), int(n, 16))
+        return format(rs, 'x').zfill(256)
+    
+    def _weapi_encrypt(self, data: dict) -> dict:
+        """weapi 加密"""
+        secret_key = '0CoJUm6Qyw8W8jud'
+        random_key = 'F3nws0dj1G5HfLKx'  # 固定随机密钥
+        
+        text = json.dumps(data)
+        params = self._aes_encrypt(text, secret_key)
+        params = self._aes_encrypt(params, random_key)
+        enc_sec_key = self._rsa_encrypt(random_key)
+        
+        return {
+            'params': params,
+            'encSecKey': enc_sec_key
+        }
+
+    # ============ URL 解析 ============
     
     def is_supported_url(self, url: str) -> bool:
         """检查是否为支持的网易云 URL"""
         if not url:
             return False
-        
-        netease_domains = ['music.163.com', '163cn.tv', 'y.music.163.com']
+        netease_domains = ['music.163.com', '163cn.tv']
         return any(domain in url.lower() for domain in netease_domains)
     
     def parse_url(self, url: str) -> Optional[Dict[str, Any]]:
@@ -225,32 +196,19 @@ class NeteaseDownloader(BaseDownloader):
                         'id': match.group(1),
                         'url': url
                     }
-        
         return None
+
+    # ============ API 调用 ============
     
     def get_song_info(self, song_id: str) -> Optional[Dict[str, Any]]:
         """获取歌曲详情"""
         try:
-            # 使用 weapi 接口
-            url = f"{self.api_url}/weapi/v3/song/detail"
+            url = 'https://music.163.com/weapi/v3/song/detail'
+            data = {'c': json.dumps([{'id': song_id}]), 'ids': f'[{song_id}]'}
+            encrypted = self._weapi_encrypt(data)
             
-            # 构建请求数据
-            data = {
-                'c': json.dumps([{'id': song_id}]),
-                'ids': f'[{song_id}]'
-            }
-            
-            # 加密请求
-            encrypted_data = self._encrypt_request(data)
-            
-            response = self.session.post(url, data=encrypted_data, timeout=30)
-            
-            # 处理可能的 JSON 解析问题
-            try:
-                result = response.json()
-            except json.JSONDecodeError as e:
-                logger.error(f"❌ JSON 解析失败: {e}, 响应内容: {response.text[:200]}")
-                return None
+            response = self.session.post(url, data=encrypted, timeout=30)
+            result = response.json()
             
             if result.get('code') == 200 and result.get('songs'):
                 song = result['songs'][0]
@@ -258,15 +216,13 @@ class NeteaseDownloader(BaseDownloader):
                     'id': str(song['id']),
                     'name': song['name'],
                     'artist': '/'.join([ar['name'] for ar in song.get('ar', [])]),
-                    'artist_id': song['ar'][0]['id'] if song.get('ar') else None,
                     'album': song.get('al', {}).get('name', ''),
                     'album_id': song.get('al', {}).get('id'),
                     'cover': song.get('al', {}).get('picUrl', ''),
                     'duration': song.get('dt', 0) // 1000,
-                    'publish_time': song.get('publishTime'),
                 }
             
-            logger.warning(f"⚠️ 获取歌曲信息失败: {result.get('msg', '未知错误')}")
+            logger.warning(f"⚠️ 获取歌曲信息失败: code={result.get('code')}, msg={result.get('msg', '')}")
             return None
             
         except Exception as e:
@@ -276,27 +232,19 @@ class NeteaseDownloader(BaseDownloader):
     def get_song_url(self, song_id: str, quality: str = None) -> Optional[Dict[str, Any]]:
         """获取歌曲下载链接"""
         try:
-            quality = quality or self.quality
-            level = self.QUALITY_MAP.get(quality, 'lossless')
+            level = self.QUALITY_MAP.get(quality or self.quality, 'lossless')
             
-            # 使用 weapi 接口
-            url = f"{self.api_url}/weapi/song/enhance/player/url/v1"
-            
+            url = 'https://music.163.com/weapi/song/enhance/player/url/v1'
             data = {
                 'ids': [int(song_id)],
                 'level': level,
-                'encodeType': 'flac' if level == 'lossless' else 'aac',
+                'encodeType': 'flac',
                 'csrf_token': ''
             }
+            encrypted = self._weapi_encrypt(data)
             
-            encrypted_data = self._encrypt_request(data)
-            response = self.session.post(url, data=encrypted_data, timeout=30)
-            
-            try:
-                result = response.json()
-            except json.JSONDecodeError as e:
-                logger.error(f"❌ JSON 解析失败: {e}")
-                return None
+            response = self.session.post(url, data=encrypted, timeout=30)
+            result = response.json()
             
             if result.get('code') == 200 and result.get('data'):
                 song_data = result['data'][0]
@@ -308,6 +256,8 @@ class NeteaseDownloader(BaseDownloader):
                         'level': song_data.get('level', level),
                         'bitrate': song_data.get('br', 0),
                     }
+                else:
+                    logger.warning(f"⚠️ 歌曲无下载链接，可能需要VIP: code={song_data.get('code')}")
             
             return None
             
@@ -318,18 +268,19 @@ class NeteaseDownloader(BaseDownloader):
     def get_lyrics(self, song_id: str) -> Optional[str]:
         """获取歌词"""
         try:
-            url = f"{self.api_url}/api/song/lyric"
-            params = {'id': song_id, 'lv': 1, 'tv': 1}
+            url = 'https://music.163.com/weapi/song/lyric'
+            data = {'id': song_id, 'lv': -1, 'tv': -1, 'csrf_token': ''}
+            encrypted = self._weapi_encrypt(data)
             
-            response = self.session.get(url, params=params, timeout=30)
-            data = response.json()
+            response = self.session.post(url, data=encrypted, timeout=30)
+            result = response.json()
             
-            if data.get('code') == 200:
-                lrc = data.get('lrc', {}).get('lyric', '')
-                tlyric = data.get('tlyric', {}).get('lyric', '')
+            if result.get('code') == 200:
+                lrc = result.get('lrc', {}).get('lyric', '')
+                tlyric = result.get('tlyric', {}).get('lyric', '')
                 
                 if self.lyrics_merge and tlyric:
-                    return self._merge_lyrics(lrc, tlyric)
+                    return f"{lrc}\n\n--- 翻译 ---\n\n{tlyric}"
                 return lrc
             
             return None
@@ -337,40 +288,28 @@ class NeteaseDownloader(BaseDownloader):
         except Exception as e:
             logger.error(f"❌ 获取歌词失败: {e}")
             return None
-    
-    def _merge_lyrics(self, lrc: str, tlyric: str) -> str:
-        """合并中英文歌词"""
-        if not tlyric:
-            return lrc
-        
-        # 简单合并实现
-        return f"{lrc}\n\n--- 翻译 ---\n\n{tlyric}"
+
+    # ============ 下载功能 ============
     
     def download_song(self, song_id: str, download_dir: str,
                      quality: str = None,
                      progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
         """下载单曲"""
         try:
-            # 获取歌曲信息
             song_info = self.get_song_info(song_id)
             if not song_info:
                 return {'success': False, 'error': '无法获取歌曲信息'}
             
-            # 获取下载链接
             song_url_info = self.get_song_url(song_id, quality)
             if not song_url_info:
-                return {'success': False, 'error': '无法获取下载链接，可能需要会员'}
+                return {'success': False, 'error': '无法获取下载链接，可能需要VIP'}
             
-            # 构建文件名
+            # 构建文件名和目录
             filename = self._build_filename(song_info, song_url_info.get('type', 'mp3'))
-            
-            # 构建目录
             save_dir = self._build_directory(download_dir, song_info)
             self.ensure_dir(save_dir)
-            
             filepath = os.path.join(save_dir, filename)
             
-            # 下载文件
             if progress_callback:
                 progress_callback({
                     'status': 'downloading',
@@ -378,6 +317,7 @@ class NeteaseDownloader(BaseDownloader):
                     'artist': song_info['artist'],
                 })
             
+            # 下载文件
             success = self._download_file(song_url_info['url'], filepath, progress_callback)
             
             if success:
@@ -411,21 +351,15 @@ class NeteaseDownloader(BaseDownloader):
     
     def _build_filename(self, song_info: Dict, ext: str) -> str:
         """构建文件名"""
-        template = self.song_file_format
-        
-        filename = template.replace('{SongName}', song_info.get('name', 'Unknown'))
+        filename = self.song_file_format.replace('{SongName}', song_info.get('name', 'Unknown'))
         filename = filename.replace('{ArtistName}', song_info.get('artist', 'Unknown'))
-        
         filename = self.clean_filename(filename)
         return f"{filename}.{ext}"
     
     def _build_directory(self, base_dir: str, song_info: Dict) -> str:
         """构建保存目录"""
-        template = self.dir_format
-        
-        path = template.replace('{ArtistName}', self.clean_filename(song_info.get('artist', 'Unknown')))
+        path = self.dir_format.replace('{ArtistName}', self.clean_filename(song_info.get('artist', 'Unknown')))
         path = path.replace('{AlbumName}', self.clean_filename(song_info.get('album', 'Unknown')))
-        
         return os.path.join(base_dir, path)
     
     def _download_file(self, url: str, filepath: str,
@@ -458,24 +392,28 @@ class NeteaseDownloader(BaseDownloader):
         except Exception as e:
             logger.error(f"❌ 下载文件失败: {e}")
             return False
+
+    # ============ 专辑/歌单 ============
     
     def get_album_songs(self, album_id: str) -> List[Dict[str, Any]]:
         """获取专辑歌曲列表"""
         try:
-            url = f"{self.api_url}/api/v1/album/{album_id}"
+            url = 'https://music.163.com/weapi/v1/album/' + album_id
+            data = {'csrf_token': ''}
+            encrypted = self._weapi_encrypt(data)
             
-            response = self.session.get(url, timeout=30)
-            data = response.json()
+            response = self.session.post(url, data=encrypted, timeout=30)
+            result = response.json()
             
-            if data.get('code') == 200:
-                songs = data.get('songs', [])
+            if result.get('code') == 200:
+                album_info = result.get('album', {})
+                songs = result.get('songs', [])
                 return [
                     {
                         'id': str(song['id']),
                         'name': song['name'],
                         'artist': '/'.join([ar['name'] for ar in song.get('ar', [])]),
-                        'album': data.get('album', {}).get('name', ''),
-                        'publish_time': data.get('album', {}).get('publishTime'),
+                        'album': album_info.get('name', ''),
                     }
                     for song in songs
                 ]
@@ -517,30 +455,45 @@ class NeteaseDownloader(BaseDownloader):
             
             if result.get('success'):
                 results['downloaded_songs'] += 1
+            
+            time.sleep(0.5)  # 避免请求过快
         
         return results
     
     def get_playlist_songs(self, playlist_id: str) -> List[Dict[str, Any]]:
         """获取歌单歌曲列表"""
         try:
-            url = f"{self.api_url}/api/v6/playlist/detail"
-            params = {'id': playlist_id}
+            url = 'https://music.163.com/weapi/v6/playlist/detail'
+            data = {'id': playlist_id, 'n': 1000, 'csrf_token': ''}
+            encrypted = self._weapi_encrypt(data)
             
-            response = self.session.get(url, params=params, timeout=30)
-            data = response.json()
+            response = self.session.post(url, data=encrypted, timeout=30)
+            result = response.json()
             
-            if data.get('code') == 200:
-                playlist = data.get('playlist', {})
-                track_ids = playlist.get('trackIds', [])
+            if result.get('code') == 200:
+                playlist = result.get('playlist', {})
+                tracks = playlist.get('tracks', [])
                 
-                # 获取歌曲详情
-                songs = []
-                for track in track_ids[:200]:  # 限制最多200首
-                    song_info = self.get_song_info(str(track['id']))
-                    if song_info:
-                        songs.append(song_info)
+                if not tracks:
+                    # 如果 tracks 为空，需要单独获取歌曲详情
+                    track_ids = playlist.get('trackIds', [])
+                    songs = []
+                    for track in track_ids[:100]:  # 限制100首
+                        song_info = self.get_song_info(str(track['id']))
+                        if song_info:
+                            songs.append(song_info)
+                        time.sleep(0.1)
+                    return songs
                 
-                return songs
+                return [
+                    {
+                        'id': str(song['id']),
+                        'name': song['name'],
+                        'artist': '/'.join([ar['name'] for ar in song.get('ar', [])]),
+                        'album': song.get('al', {}).get('name', ''),
+                    }
+                    for song in tracks
+                ]
             
             return []
             
@@ -579,5 +532,7 @@ class NeteaseDownloader(BaseDownloader):
             
             if result.get('success'):
                 results['downloaded_songs'] += 1
+            
+            time.sleep(0.5)
         
         return results

@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram Session 生成器</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #f5f5f7;
+            --card-bg: rgba(255, 255, 255, 0.85);
+            --text-primary: #1d1d1f;
+            --text-secondary: #86868b;
+            --accent: #007AFF;
+            --accent-hover: #0056b3;
+            --success: #34c759;
+            --danger: #ff3b30;
+            --border: rgba(0, 0, 0, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border-radius: 24px;
+            padding: 40px;
+            width: 100%;
+            max-width: 480px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .header .logo {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+
+        .header h1 {
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+
+        .header p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        .steps {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 24px;
+        }
+
+        .step {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.85rem;
+            font-weight: 600;
+            background: rgba(0, 122, 255, 0.1);
+            color: var(--accent);
+            transition: all 0.3s ease;
+        }
+
+        .step.active {
+            background: var(--accent);
+            color: white;
+        }
+
+        .step.completed {
+            background: var(--success);
+            color: white;
+        }
+
+        .form-section {
+            display: none;
+        }
+
+        .form-section.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 14px 16px;
+            font-size: 1rem;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.8);
+            transition: all 0.2s ease;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15);
+        }
+
+        .form-group small {
+            display: block;
+            margin-top: 6px;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 16px;
+            font-size: 1rem;
+            font-weight: 600;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-primary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 16px;
+        }
+
+        .btn-group .btn {
+            flex: 1;
+        }
+
+        .btn-secondary {
+            background: rgba(0, 0, 0, 0.05);
+            color: var(--text-primary);
+        }
+
+        .message {
+            padding: 14px 16px;
+            border-radius: 12px;
+            margin-bottom: 16px;
+            font-size: 0.9rem;
+            display: none;
+        }
+
+        .message.show {
+            display: block;
+        }
+
+        .message.success {
+            background: rgba(52, 199, 89, 0.15);
+            color: #1e7e34;
+        }
+
+        .message.error {
+            background: rgba(255, 59, 48, 0.15);
+            color: #bd2130;
+        }
+
+        .result-box {
+            background: rgba(0, 0, 0, 0.03);
+            border-radius: 12px;
+            padding: 16px;
+            margin: 16px 0;
+        }
+
+        .result-box label {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            display: block;
+        }
+
+        .result-box textarea {
+            width: 100%;
+            height: 120px;
+            padding: 12px;
+            font-family: monospace;
+            font-size: 0.85rem;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            resize: none;
+            background: white;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .back-link {
+            display: block;
+            text-align: center;
+            margin-top: 24px;
+            color: var(--accent);
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">🔐</div>
+            <h1>Telegram Session 生成器</h1>
+            <p>生成 Telethon Session String 用于大文件下载</p>
+        </div>
+
+        <!-- 步骤指示器 -->
+        <div class="steps">
+            <div class="step active" id="step1">1</div>
+            <div class="step" id="step2">2</div>
+            <div class="step" id="step3">3</div>
+        </div>
+
+        <!-- 消息提示 -->
+        <div class="message" id="message"></div>
+
+        <!-- 第一步：输入 API 信息 -->
+        <div class="form-section active" id="section1">
+            <div class="form-group">
+                <label>API ID</label>
+                <input type="text" id="api_id" placeholder="从 my.telegram.org 获取">
+                <small>登录 <a href="https://my.telegram.org" target="_blank">my.telegram.org</a> → API development tools</small>
+            </div>
+            <div class="form-group">
+                <label>API Hash</label>
+                <input type="password" id="api_hash" placeholder="API Hash">
+            </div>
+            <div class="form-group">
+                <label>手机号</label>
+                <input type="text" id="phone" placeholder="+86 手机号（带国际区号）">
+            </div>
+            <button class="btn btn-primary" id="btnSendCode" onclick="sendCode()">
+                📤 发送验证码
+            </button>
+        </div>
+
+        <!-- 第二步：输入验证码 -->
+        <div class="form-section" id="section2">
+            <div class="form-group">
+                <label>验证码</label>
+                <input type="text" id="code" placeholder="输入收到的验证码">
+                <small>请查看 Telegram 收到的验证码消息</small>
+            </div>
+            <button class="btn btn-primary" id="btnConfirmCode" onclick="confirmCode()">
+                ✅ 确认验证码
+            </button>
+            <div class="btn-group">
+                <button class="btn btn-secondary" onclick="goToStep(1)">← 返回</button>
+            </div>
+        </div>
+
+        <!-- 第三步：显示结果 -->
+        <div class="form-section" id="section3">
+            <div class="result-box">
+                <label>Session String</label>
+                <textarea id="sessionString" readonly></textarea>
+            </div>
+            <button class="btn btn-success" onclick="saveSession()">
+                💾 保存到配置
+            </button>
+            <button class="btn btn-secondary" style="margin-top: 12px;" onclick="copySession()">
+                📋 复制到剪贴板
+            </button>
+        </div>
+
+        <a href="/" class="back-link">← 返回配置中心</a>
+    </div>
+
+    <script>
+        // 存储临时数据
+        let tempData = {
+            api_id: '',
+            api_hash: '',
+            phone: '',
+            phone_code_hash: '',
+            temp_session_string: '',
+            session_string: ''
+        };
+
+        // 显示消息
+        function showMessage(text, type = 'info') {
+            const msg = document.getElementById('message');
+            msg.textContent = text;
+            msg.className = `message show ${type}`;
+            setTimeout(() => {
+                msg.classList.remove('show');
+            }, 5000);
+        }
+
+        // 切换步骤
+        function goToStep(step) {
+            document.querySelectorAll('.form-section').forEach(s => s.classList.remove('active'));
+            document.querySelectorAll('.step').forEach(s => s.classList.remove('active', 'completed'));
+            
+            document.getElementById(`section${step}`).classList.add('active');
+            
+            for (let i = 1; i <= 3; i++) {
+                const stepEl = document.getElementById(`step${i}`);
+                if (i < step) {
+                    stepEl.classList.add('completed');
+                } else if (i === step) {
+                    stepEl.classList.add('active');
+                }
+            }
+        }
+
+        // 设置按钮加载状态
+        function setLoading(btnId, loading) {
+            const btn = document.getElementById(btnId);
+            if (loading) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="loading"></span> 处理中...';
+            } else {
+                btn.disabled = false;
+                if (btnId === 'btnSendCode') {
+                    btn.innerHTML = '📤 发送验证码';
+                } else if (btnId === 'btnConfirmCode') {
+                    btn.innerHTML = '✅ 确认验证码';
+                }
+            }
+        }
+
+        // 发送验证码
+        async function sendCode() {
+            const api_id = document.getElementById('api_id').value.trim();
+            const api_hash = document.getElementById('api_hash').value.trim();
+            const phone = document.getElementById('phone').value.trim();
+
+            if (!api_id || !api_hash || !phone) {
+                showMessage('请填写所有字段', 'error');
+                return;
+            }
+
+            setLoading('btnSendCode', true);
+
+            try {
+                const response = await fetch('/tg/send_code', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_id, api_hash, phone })
+                });
+
+                const result = await response.json();
+
+                if (result.ok) {
+                    tempData = {
+                        ...tempData,
+                        api_id,
+                        api_hash,
+                        phone,
+                        phone_code_hash: result.phone_code_hash,
+                        temp_session_string: result.temp_session_string
+                    };
+                    showMessage(result.message || '验证码已发送', 'success');
+                    goToStep(2);
+                } else {
+                    showMessage(result.error || '发送失败', 'error');
+                }
+            } catch (error) {
+                showMessage('网络错误: ' + error.message, 'error');
+            } finally {
+                setLoading('btnSendCode', false);
+            }
+        }
+
+        // 确认验证码
+        async function confirmCode() {
+            const code = document.getElementById('code').value.trim();
+
+            if (!code) {
+                showMessage('请输入验证码', 'error');
+                return;
+            }
+
+            setLoading('btnConfirmCode', true);
+
+            try {
+                const response = await fetch('/tg/confirm_code', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        api_id: tempData.api_id,
+                        api_hash: tempData.api_hash,
+                        phone: tempData.phone,
+                        code: code,
+                        phone_code_hash: tempData.phone_code_hash,
+                        temp_session_string: tempData.temp_session_string
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.ok) {
+                    tempData.session_string = result.session_string;
+                    document.getElementById('sessionString').value = result.session_string;
+                    showMessage('Session 生成成功！', 'success');
+                    goToStep(3);
+                } else {
+                    showMessage(result.error || '验证失败', 'error');
+                }
+            } catch (error) {
+                showMessage('网络错误: ' + error.message, 'error');
+            } finally {
+                setLoading('btnConfirmCode', false);
+            }
+        }
+
+        // 保存 Session
+        async function saveSession() {
+            try {
+                const response = await fetch('/tg/save_session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_string: tempData.session_string })
+                });
+
+                const result = await response.json();
+
+                if (result.ok) {
+                    showMessage('Session 已保存到配置！', 'success');
+                } else {
+                    showMessage(result.error || '保存失败', 'error');
+                }
+            } catch (error) {
+                showMessage('保存失败: ' + error.message, 'error');
+            }
+        }
+
+        // 复制 Session
+        function copySession() {
+            const textarea = document.getElementById('sessionString');
+            textarea.select();
+            document.execCommand('copy');
+            showMessage('已复制到剪贴板', 'success');
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  music-bot:
+    build: .
+    container_name: music-bot
+    restart: unless-stopped
+    ports:
+      - "5000:5000"  # Web 配置界面
+    volumes:
+      - ./db:/app/db                    # 配置数据库
+      - ./cookies:/app/cookies          # Cookies 文件
+      - ./logs:/app/logs                # 日志文件
+      - /path/to/downloads:/downloads   # 下载目录 (修改为你的实际路径)
+    environment:
+      - TZ=Asia/Shanghai
+      # 以下环境变量可选，也可以通过 Web 界面配置
+      # - TELEGRAM_BOT_TOKEN=your_bot_token
+      # - PROXY_HOST=http://192.168.1.1:7890
+    networks:
+      - music-bot-network
+
+networks:
+  music-bot-network:
+    driver: bridge

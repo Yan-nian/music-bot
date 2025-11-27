@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Bot - 配置中心</title>
+    <script src="https://unpkg.com/feather-icons"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #f5f5f7;
+            --card-bg: rgba(255, 255, 255, 0.8);
+            --text-primary: #1d1d1f;
+            --text-secondary: #86868b;
+            --accent: #007AFF;
+            --accent-hover: #0056b3;
+            --success: #34c759;
+            --warning: #ff9500;
+            --danger: #ff3b30;
+            --border: rgba(0, 0, 0, 0.1);
+            --shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-color);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        /* 头部 */
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding: 40px 20px;
+            background: var(--card-bg);
+            border-radius: 20px;
+            backdrop-filter: blur(20px);
+            box-shadow: var(--shadow);
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, var(--accent), #5856d6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+
+        /* 状态卡片 */
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 30px;
+        }
+
+        .status-card {
+            background: var(--card-bg);
+            border-radius: 16px;
+            padding: 20px;
+            backdrop-filter: blur(20px);
+            box-shadow: var(--shadow);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            transition: transform 0.2s ease;
+        }
+
+        .status-card:hover {
+            transform: translateY(-2px);
+        }
+
+        .status-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+        }
+
+        .status-icon.enabled {
+            background: rgba(52, 199, 89, 0.15);
+            color: var(--success);
+        }
+
+        .status-icon.disabled {
+            background: rgba(134, 134, 139, 0.15);
+            color: var(--text-secondary);
+        }
+
+        .status-info h3 {
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .status-info span {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        /* 导航标签 */
+        .nav-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+
+        .nav-tab {
+            padding: 12px 24px;
+            background: var(--card-bg);
+            border: none;
+            border-radius: 12px;
+            font-size: 0.95rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            backdrop-filter: blur(20px);
+        }
+
+        .nav-tab:hover {
+            background: rgba(0, 122, 255, 0.1);
+            color: var(--accent);
+        }
+
+        .nav-tab.active {
+            background: var(--accent);
+            color: white;
+        }
+
+        /* 配置区域 */
+        .config-section {
+            display: none;
+            background: var(--card-bg);
+            border-radius: 20px;
+            padding: 30px;
+            backdrop-filter: blur(20px);
+            box-shadow: var(--shadow);
+            margin-bottom: 20px;
+        }
+
+        .config-section.active {
+            display: block;
+        }
+
+        .config-section h2 {
+            font-size: 1.4rem;
+            font-weight: 600;
+            margin-bottom: 24px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .config-group {
+            margin-bottom: 24px;
+        }
+
+        .config-group h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.9rem;
+            font-weight: 500;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+
+        .form-group input[type="text"],
+        .form-group input[type="password"],
+        .form-group input[type="number"],
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px 16px;
+            font-size: 0.95rem;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.5);
+            color: var(--text-primary);
+            transition: all 0.2s ease;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15);
+        }
+
+        .form-group textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+
+        /* 开关 */
+        .switch-group {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 12px;
+            margin-bottom: 12px;
+        }
+
+        .switch-label {
+            font-weight: 500;
+        }
+
+        .switch {
+            position: relative;
+            width: 52px;
+            height: 32px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: 0.3s;
+            border-radius: 32px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        input:checked + .slider {
+            background-color: var(--accent);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(20px);
+        }
+
+        /* 按钮 */
+        .btn-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 14px 28px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: rgba(0, 0, 0, 0.05);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(0, 0, 0, 0.1);
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #d62c23;
+        }
+
+        /* Toast 通知 */
+        .toast {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            padding: 16px 24px;
+            border-radius: 12px;
+            color: white;
+            font-weight: 500;
+            z-index: 1000;
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease;
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .toast.success {
+            background: var(--success);
+        }
+
+        .toast.error {
+            background: var(--danger);
+        }
+
+        .toast.info {
+            background: var(--accent);
+        }
+
+        /* 响应式 */
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 1.8rem;
+            }
+
+            .config-section {
+                padding: 20px;
+            }
+
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 头部 -->
+        <div class="header">
+            <h1>🎵 Music Bot 配置中心</h1>
+            <p>管理你的音乐下载机器人配置</p>
+        </div>
+
+        <!-- 状态卡片 -->
+        <div class="status-grid" id="statusGrid">
+            <div class="status-card">
+                <div class="status-icon disabled" id="statusBot">🤖</div>
+                <div class="status-info">
+                    <h3>Telegram Bot</h3>
+                    <span id="statusBotText">未配置</span>
+                </div>
+            </div>
+            <div class="status-card">
+                <div class="status-icon disabled" id="statusNetease">🎵</div>
+                <div class="status-info">
+                    <h3>网易云音乐</h3>
+                    <span id="statusNeteaseText">未启用</span>
+                </div>
+            </div>
+            <div class="status-card">
+                <div class="status-icon disabled" id="statusApple">🍎</div>
+                <div class="status-info">
+                    <h3>Apple Music</h3>
+                    <span id="statusAppleText">未启用</span>
+                </div>
+            </div>
+            <div class="status-card">
+                <div class="status-icon disabled" id="statusYoutube">▶️</div>
+                <div class="status-info">
+                    <h3>YouTube Music</h3>
+                    <span id="statusYoutubeText">未启用</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 导航标签 -->
+        <div class="nav-tabs">
+            <button class="nav-tab active" data-section="telegram">📱 Telegram</button>
+            <button class="nav-tab" data-section="netease">🎵 网易云音乐</button>
+            <button class="nav-tab" data-section="apple">🍎 Apple Music</button>
+            <button class="nav-tab" data-section="youtube">▶️ YouTube Music</button>
+            <button class="nav-tab" data-section="general">⚙️ 通用设置</button>
+        </div>
+
+        <!-- Telegram 配置 -->
+        <div class="config-section active" id="section-telegram">
+            <h2>📱 Telegram 配置</h2>
+            
+            <div class="config-group">
+                <h3>Bot 设置</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Bot Token *</label>
+                        <input type="password" id="telegram_bot_token" placeholder="从 @BotFather 获取">
+                    </div>
+                    <div class="form-group">
+                        <label>允许的用户 ID</label>
+                        <input type="text" id="telegram_allowed_users" placeholder="多个用逗号分隔，留空允许所有人">
+                    </div>
+                </div>
+            </div>
+
+            <div class="config-group">
+                <h3>API 设置（可选，用于下载大文件）</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>API ID</label>
+                        <input type="text" id="telegram_api_id" placeholder="从 my.telegram.org 获取">
+                    </div>
+                    <div class="form-group">
+                        <label>API Hash</label>
+                        <input type="password" id="telegram_api_hash" placeholder="从 my.telegram.org 获取">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Session String</label>
+                    <textarea id="telegram_session_string" placeholder="通过 /setup 页面生成"></textarea>
+                </div>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="saveConfig('telegram')">💾 保存配置</button>
+                <a href="/setup" class="btn btn-secondary">🔐 生成 Session</a>
+            </div>
+        </div>
+
+        <!-- 网易云音乐配置 -->
+        <div class="config-section" id="section-netease">
+            <h2>🎵 网易云音乐配置</h2>
+            
+            <div class="switch-group">
+                <span class="switch-label">启用网易云音乐下载</span>
+                <label class="switch">
+                    <input type="checkbox" id="netease_enabled">
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div class="config-group">
+                <h3>下载设置</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>音质</label>
+                        <select id="netease_quality">
+                            <option value="标准">标准 (128kbps)</option>
+                            <option value="较高">较高 (320kbps)</option>
+                            <option value="极高">极高 (FLAC)</option>
+                            <option value="无损">无损 (Hi-Res)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>歌曲文件名格式</label>
+                        <input type="text" id="netease_song_file_format" placeholder="{SongName}">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>目录格式</label>
+                        <input type="text" id="netease_dir_format" placeholder="{ArtistName}/{AlbumName}">
+                    </div>
+                    <div class="form-group">
+                        <label>专辑文件夹格式</label>
+                        <input type="text" id="netease_album_folder_format" placeholder="{AlbumName}({ReleaseDate})">
+                    </div>
+                </div>
+            </div>
+
+            <div class="config-group">
+                <h3>功能开关</h3>
+                <div class="switch-group">
+                    <span class="switch-label">下载歌词</span>
+                    <label class="switch">
+                        <input type="checkbox" id="netease_download_lyrics">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="switch-group">
+                    <span class="switch-label">下载封面</span>
+                    <label class="switch">
+                        <input type="checkbox" id="netease_download_cover">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="switch-group">
+                    <span class="switch-label">合并歌词到音频文件</span>
+                    <label class="switch">
+                        <input type="checkbox" id="netease_lyrics_merge">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="config-group">
+                <h3>Cookies（需要会员下载高品质）</h3>
+                <div class="form-group">
+                    <label>网易云音乐 Cookies</label>
+                    <textarea id="netease_cookies" placeholder="MUSIC_U=xxx; __csrf=xxx;"></textarea>
+                </div>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="saveConfig('netease')">💾 保存配置</button>
+            </div>
+        </div>
+
+        <!-- Apple Music 配置 -->
+        <div class="config-section" id="section-apple">
+            <h2>🍎 Apple Music 配置</h2>
+            
+            <div class="switch-group">
+                <span class="switch-label">启用 Apple Music 下载</span>
+                <label class="switch">
+                    <input type="checkbox" id="apple_music_enabled">
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div class="config-group">
+                <h3>下载设置</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>音质</label>
+                        <select id="apple_music_quality">
+                            <option value="aac">AAC (256kbps)</option>
+                            <option value="lossless">无损 (ALAC)</option>
+                            <option value="atmos">杜比全景声</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>地区</label>
+                        <select id="apple_music_region">
+                            <option value="cn">中国</option>
+                            <option value="us">美国</option>
+                            <option value="jp">日本</option>
+                            <option value="hk">香港</option>
+                            <option value="tw">台湾</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="config-group">
+                <h3>解密服务（高级）</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>解密服务地址</label>
+                        <input type="text" id="apple_music_decrypt_host" placeholder="192.168.2.134:10020">
+                    </div>
+                    <div class="form-group">
+                        <label>获取服务地址</label>
+                        <input type="text" id="apple_music_get_host" placeholder="192.168.2.134:20020">
+                    </div>
+                </div>
+            </div>
+
+            <div class="config-group">
+                <h3>功能开关</h3>
+                <div class="switch-group">
+                    <span class="switch-label">下载歌词</span>
+                    <label class="switch">
+                        <input type="checkbox" id="apple_music_download_lyrics">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="switch-group">
+                    <span class="switch-label">下载封面</span>
+                    <label class="switch">
+                        <input type="checkbox" id="apple_music_download_cover">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="saveConfig('apple')">💾 保存配置</button>
+            </div>
+        </div>
+
+        <!-- YouTube Music 配置 -->
+        <div class="config-section" id="section-youtube">
+            <h2>▶️ YouTube Music 配置</h2>
+            
+            <div class="switch-group">
+                <span class="switch-label">启用 YouTube Music 下载</span>
+                <label class="switch">
+                    <input type="checkbox" id="youtube_music_enabled">
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div class="config-group">
+                <h3>下载设置</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>音质</label>
+                        <select id="youtube_music_quality">
+                            <option value="best">最佳</option>
+                            <option value="320k">320kbps</option>
+                            <option value="256k">256kbps</option>
+                            <option value="128k">128kbps</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>输出格式</label>
+                        <select id="youtube_music_format">
+                            <option value="m4a">M4A</option>
+                            <option value="mp3">MP3</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="config-group">
+                <h3>功能开关</h3>
+                <div class="switch-group">
+                    <span class="switch-label">下载封面</span>
+                    <label class="switch">
+                        <input type="checkbox" id="youtube_music_download_cover">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="saveConfig('youtube')">💾 保存配置</button>
+            </div>
+        </div>
+
+        <!-- 通用设置 -->
+        <div class="config-section" id="section-general">
+            <h2>⚙️ 通用设置</h2>
+            
+            <div class="config-group">
+                <h3>存储设置</h3>
+                <div class="form-group">
+                    <label>下载保存路径</label>
+                    <input type="text" id="download_path" placeholder="/downloads">
+                </div>
+            </div>
+
+            <div class="config-group">
+                <h3>代理设置</h3>
+                <div class="switch-group">
+                    <span class="switch-label">启用代理</span>
+                    <label class="switch">
+                        <input type="checkbox" id="proxy_enabled">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>代理地址</label>
+                    <input type="text" id="proxy_host" placeholder="http://192.168.1.1:7890">
+                </div>
+            </div>
+
+            <div class="config-group">
+                <h3>日志设置</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>日志级别</label>
+                        <select id="log_level">
+                            <option value="DEBUG">DEBUG</option>
+                            <option value="INFO">INFO</option>
+                            <option value="WARNING">WARNING</option>
+                            <option value="ERROR">ERROR</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="switch-group">
+                    <span class="switch-label">输出到文件</span>
+                    <label class="switch">
+                        <input type="checkbox" id="log_to_file">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="switch-group">
+                    <span class="switch-label">输出到控制台</span>
+                    <label class="switch">
+                        <input type="checkbox" id="log_to_console">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="saveAllConfig()">💾 保存全部配置</button>
+                <button class="btn btn-danger" onclick="resetConfig()">🔄 重置为默认</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast 通知 -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        // 初始化 Feather Icons
+        feather.replace();
+
+        // 配置字段映射
+        const configFields = {
+            telegram: ['telegram_bot_token', 'telegram_allowed_users', 'telegram_api_id', 'telegram_api_hash', 'telegram_session_string'],
+            netease: ['netease_enabled', 'netease_quality', 'netease_song_file_format', 'netease_dir_format', 'netease_album_folder_format', 'netease_download_lyrics', 'netease_download_cover', 'netease_lyrics_merge', 'netease_cookies'],
+            apple: ['apple_music_enabled', 'apple_music_quality', 'apple_music_region', 'apple_music_decrypt_host', 'apple_music_get_host', 'apple_music_download_lyrics', 'apple_music_download_cover'],
+            youtube: ['youtube_music_enabled', 'youtube_music_quality', 'youtube_music_format', 'youtube_music_download_cover'],
+            general: ['download_path', 'proxy_enabled', 'proxy_host', 'log_level', 'log_to_file', 'log_to_console']
+        };
+
+        // 显示 Toast 通知
+        function showToast(message, type = 'info') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = `toast ${type} show`;
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        // 切换标签页
+        document.querySelectorAll('.nav-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.config-section').forEach(s => s.classList.remove('active'));
+                
+                tab.classList.add('active');
+                const section = document.getElementById(`section-${tab.dataset.section}`);
+                if (section) section.classList.add('active');
+            });
+        });
+
+        // 加载配置
+        async function loadConfig() {
+            try {
+                const response = await fetch('/api/config');
+                const result = await response.json();
+                
+                if (result.success) {
+                    const config = result.data;
+                    
+                    // 填充所有字段
+                    Object.keys(config).forEach(key => {
+                        const element = document.getElementById(key);
+                        if (element) {
+                            if (element.type === 'checkbox') {
+                                element.checked = config[key];
+                            } else {
+                                element.value = config[key];
+                            }
+                        }
+                    });
+                    
+                    // 更新状态
+                    updateStatus(config);
+                }
+            } catch (error) {
+                console.error('加载配置失败:', error);
+                showToast('加载配置失败', 'error');
+            }
+        }
+
+        // 更新状态显示
+        function updateStatus(config) {
+            // Bot 状态
+            const botConfigured = config.telegram_bot_token && config.telegram_bot_token !== '******';
+            document.getElementById('statusBot').className = `status-icon ${botConfigured ? 'enabled' : 'disabled'}`;
+            document.getElementById('statusBotText').textContent = botConfigured ? '已配置' : '未配置';
+
+            // 网易云状态
+            const neteaseEnabled = config.netease_enabled;
+            document.getElementById('statusNetease').className = `status-icon ${neteaseEnabled ? 'enabled' : 'disabled'}`;
+            document.getElementById('statusNeteaseText').textContent = neteaseEnabled ? '已启用' : '未启用';
+
+            // Apple Music 状态
+            const appleEnabled = config.apple_music_enabled;
+            document.getElementById('statusApple').className = `status-icon ${appleEnabled ? 'enabled' : 'disabled'}`;
+            document.getElementById('statusAppleText').textContent = appleEnabled ? '已启用' : '未启用';
+
+            // YouTube Music 状态
+            const youtubeEnabled = config.youtube_music_enabled;
+            document.getElementById('statusYoutube').className = `status-icon ${youtubeEnabled ? 'enabled' : 'disabled'}`;
+            document.getElementById('statusYoutubeText').textContent = youtubeEnabled ? '已启用' : '未启用';
+        }
+
+        // 获取表单数据
+        function getFormData(section) {
+            const fields = configFields[section] || [];
+            const data = {};
+            
+            fields.forEach(key => {
+                const element = document.getElementById(key);
+                if (element) {
+                    if (element.type === 'checkbox') {
+                        data[key] = element.checked;
+                    } else {
+                        data[key] = element.value;
+                    }
+                }
+            });
+            
+            return data;
+        }
+
+        // 保存配置
+        async function saveConfig(section) {
+            try {
+                const data = getFormData(section);
+                
+                const response = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showToast('配置保存成功', 'success');
+                    loadConfig();  // 重新加载以更新状态
+                } else {
+                    showToast(result.error || '保存失败', 'error');
+                }
+            } catch (error) {
+                console.error('保存配置失败:', error);
+                showToast('保存配置失败', 'error');
+            }
+        }
+
+        // 保存所有配置
+        async function saveAllConfig() {
+            try {
+                const allData = {};
+                Object.keys(configFields).forEach(section => {
+                    Object.assign(allData, getFormData(section));
+                });
+                
+                const response = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(allData)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showToast('所有配置保存成功', 'success');
+                    loadConfig();
+                } else {
+                    showToast(result.error || '保存失败', 'error');
+                }
+            } catch (error) {
+                console.error('保存配置失败:', error);
+                showToast('保存配置失败', 'error');
+            }
+        }
+
+        // 重置配置
+        async function resetConfig() {
+            if (!confirm('确定要重置所有配置为默认值吗？此操作不可撤销！')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/config/reset', {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showToast('配置已重置', 'success');
+                    loadConfig();
+                } else {
+                    showToast(result.error || '重置失败', 'error');
+                }
+            } catch (error) {
+                console.error('重置配置失败:', error);
+                showToast('重置配置失败', 'error');
+            }
+        }
+
+        // 页面加载时获取配置
+        document.addEventListener('DOMContentLoaded', loadConfig);
+    </script>
+</body>
+</html>

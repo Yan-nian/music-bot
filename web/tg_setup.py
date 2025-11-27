@@ -272,3 +272,13 @@ asyncio.run(confirm_code())
             return jsonify({"ok": False, "error": str(e)})
     
     return bp
+
+
+# 配置管理器引用
+_config_manager = None
+
+
+def init_tg_setup(config_manager):
+    """初始化 tg_setup 模块"""
+    global _config_manager
+    _config_manager = config_manager

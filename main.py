@@ -259,9 +259,18 @@ class MusicBot:
             return
         
         bot_token = self.config.get('telegram_bot_token')
-        if not bot_token:
+        if not bot_token or bot_token == '******':
             logger.error("❌ 未配置 Telegram Bot Token")
-            return
+            logger.info("💡 请访问 Web 配置界面 (http://localhost:5000) 配置 Bot Token")
+            # 不退出，保持 Web 服务运行
+            while True:
+                await asyncio.sleep(60)
+                # 重新加载配置检查是否已配置
+                self.config = self.config_manager.get_all_config()
+                bot_token = self.config.get('telegram_bot_token')
+                if bot_token and bot_token != '******':
+                    logger.info("✅ 检测到 Bot Token 已配置，正在启动...")
+                    break
         
         # 创建应用
         self.app = Application.builder().token(bot_token).build()

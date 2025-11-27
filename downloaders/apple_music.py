@@ -167,6 +167,61 @@ class AppleMusicDownloader(BaseDownloader):
         """检查 URL 是否支持"""
         return self.parse_url(url) is not None
 
+    def download_song(self, song_id: str, download_dir: str,
+                     quality: str = 'standard',
+                     progress_callback=None) -> Dict[str, Any]:
+        """下载单曲（同步接口）"""
+        if not self.gamdl_available:
+            return {
+                "success": False,
+                "error": "gamdl 未安装",
+                "platform": "AppleMusic",
+            }
+        
+        # 构造 URL
+        url = f"https://music.apple.com/song/{song_id}"
+        try:
+            import asyncio
+            return asyncio.run(self._download_song(url, {"type": "song", "id": song_id}, progress_callback))
+        except Exception as e:
+            return {"success": False, "error": str(e), "platform": "AppleMusic"}
+
+    def download_album(self, album_id: str, download_dir: str,
+                      quality: str = 'standard',
+                      progress_callback=None) -> Dict[str, Any]:
+        """下载专辑（同步接口）"""
+        if not self.gamdl_available:
+            return {
+                "success": False,
+                "error": "gamdl 未安装",
+                "platform": "AppleMusic",
+            }
+        
+        url = f"https://music.apple.com/album/{album_id}"
+        try:
+            import asyncio
+            return asyncio.run(self._download_album(url, {"type": "album", "id": album_id}, progress_callback))
+        except Exception as e:
+            return {"success": False, "error": str(e), "platform": "AppleMusic"}
+
+    def download_playlist(self, playlist_id: str, download_dir: str,
+                         quality: str = 'standard',
+                         progress_callback=None) -> Dict[str, Any]:
+        """下载歌单（同步接口）"""
+        if not self.gamdl_available:
+            return {
+                "success": False,
+                "error": "gamdl 未安装",
+                "platform": "AppleMusic",
+            }
+        
+        url = f"https://music.apple.com/playlist/{playlist_id}"
+        try:
+            import asyncio
+            return asyncio.run(self._download_playlist(url, {"type": "playlist", "id": playlist_id}, progress_callback))
+        except Exception as e:
+            return {"success": False, "error": str(e), "platform": "AppleMusic"}
+
     async def download(
         self, url: str, progress_callback=None, **kwargs
     ) -> Dict[str, Any]:

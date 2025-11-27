@@ -631,6 +631,17 @@
                 </div>
             </div>
 
+            <div class="config-group">
+                <h3>Cookies 配置</h3>
+                <div class="form-group">
+                    <label>Apple Music Cookies</label>
+                    <textarea id="apple_music_cookies" placeholder="从 music.apple.com 导出的 cookies（Netscape 格式或 JSON 格式）" rows="6"></textarea>
+                    <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+                        💡 使用浏览器扩展 "Get cookies.txt LOCALLY" 导出 cookies
+                    </small>
+                </div>
+            </div>
+
             <div class="btn-group">
                 <button class="btn btn-primary" onclick="saveConfig('apple')">💾 保存配置</button>
             </div>
@@ -678,6 +689,17 @@
                         <input type="checkbox" id="youtube_music_download_cover">
                         <span class="slider"></span>
                     </label>
+                </div>
+            </div>
+
+            <div class="config-group">
+                <h3>Cookies 配置</h3>
+                <div class="form-group">
+                    <label>YouTube Cookies</label>
+                    <textarea id="youtube_music_cookies" placeholder="从 youtube.com 或 music.youtube.com 导出的 cookies（Netscape 格式）" rows="6"></textarea>
+                    <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+                        💡 使用浏览器扩展 "Get cookies.txt LOCALLY" 导出 cookies，用于下载会员专属内容
+                    </small>
                 </div>
             </div>
 
@@ -760,8 +782,8 @@
         const configFields = {
             telegram: ['telegram_bot_token', 'telegram_allowed_users', 'telegram_api_id', 'telegram_api_hash', 'telegram_session_string'],
             netease: ['netease_enabled', 'netease_quality', 'netease_song_file_format', 'netease_dir_format', 'netease_album_folder_format', 'netease_download_lyrics', 'netease_download_cover', 'netease_lyrics_merge', 'netease_cookies'],
-            apple: ['apple_music_enabled', 'apple_music_quality', 'apple_music_region', 'apple_music_decrypt_host', 'apple_music_get_host', 'apple_music_download_lyrics', 'apple_music_download_cover'],
-            youtube: ['youtube_music_enabled', 'youtube_music_quality', 'youtube_music_format', 'youtube_music_download_cover'],
+            apple: ['apple_music_enabled', 'apple_music_quality', 'apple_music_region', 'apple_music_decrypt_host', 'apple_music_get_host', 'apple_music_download_lyrics', 'apple_music_download_cover', 'apple_music_cookies'],
+            youtube: ['youtube_music_enabled', 'youtube_music_quality', 'youtube_music_format', 'youtube_music_download_cover', 'youtube_music_cookies'],
             general: ['download_path', 'proxy_enabled', 'proxy_host', 'log_level', 'log_to_file', 'log_to_console']
         };
 

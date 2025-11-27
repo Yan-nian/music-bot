@@ -55,12 +55,14 @@ class ConfigManager:
         "apple_music_region": "cn",
         "apple_music_decrypt_host": "",
         "apple_music_get_host": "",
+        "apple_music_cookies": "",
         
         # YouTube Music 配置
         "youtube_music_enabled": True,
         "youtube_music_quality": "best",  # best/320k/256k/128k
         "youtube_music_format": "m4a",  # m4a/mp3
         "youtube_music_download_cover": True,
+        "youtube_music_cookies": "",
         
         # qBittorrent 配置
         "qbittorrent_enabled": False,

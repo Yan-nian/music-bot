@@ -48,17 +48,10 @@ def get_all_config():
     """获取所有配置"""
     try:
         config = config_manager.get_all_config()
-        # 隐藏敏感信息
-        safe_config = config.copy()
-        sensitive_keys = ['telegram_bot_token', 'telegram_api_hash', 'telegram_session_string',
-                         'netease_cookies', 'qbittorrent_password']
-        for key in sensitive_keys:
-            if key in safe_config and safe_config[key]:
-                safe_config[key] = '******' if safe_config[key] else ''
-        
+        # 明文显示所有配置
         return jsonify({
             'success': True,
-            'data': safe_config
+            'data': config
         })
     except Exception as e:
         logger.error(f"获取配置失败: {e}")
@@ -73,10 +66,7 @@ def update_config():
         if not data:
             return jsonify({'success': False, 'error': '无效的请求数据'}), 400
         
-        # 过滤掉隐藏的敏感字段（值为 ******）
-        filtered_data = {k: v for k, v in data.items() if v != '******'}
-        
-        if config_manager.update_config_batch(filtered_data):
+        if config_manager.update_config_batch(data):
             return jsonify({'success': True, 'message': '配置更新成功'})
         else:
             return jsonify({'success': False, 'error': '配置更新失败'}), 500

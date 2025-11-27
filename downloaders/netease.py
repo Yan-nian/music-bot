@@ -187,7 +187,13 @@ class NeteaseDownloader(BaseDownloader):
             params = {'c': json.dumps([{'id': song_id}])}
             
             response = self.session.get(url, params=params, timeout=30)
-            data = response.json()
+            
+            # 处理可能的 JSON 解析问题
+            try:
+                data = response.json()
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ JSON 解析失败: {e}, 响应内容: {response.text[:200]}")
+                return None
             
             if data.get('code') == 200 and data.get('songs'):
                 song = data['songs'][0]

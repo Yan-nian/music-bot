@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 网易云音乐下载器
-使用公开 API 实现
+使用官方 API 实现（参考原项目 renlixing87/savextube）
 """
 
 import os
@@ -20,56 +20,57 @@ logger = logging.getLogger(__name__)
 
 
 class NeteaseDownloader(BaseDownloader):
-    """网易云音乐下载器 - 使用第三方 API"""
+    """网易云音乐下载器 - 使用官方 API"""
     
     # URL 正则模式
     URL_PATTERNS = {
         'song': [
-            r'music\.163\.com.*song\?id=(\d+)',
+            r'music\.163\.com.*[#/]song\?id=(\d+)',
             r'music\.163\.com.*song/(\d+)',
             r'163cn\.tv/([a-zA-Z0-9]+)',
         ],
         'album': [
-            r'music\.163\.com.*album\?id=(\d+)',
+            r'music\.163\.com.*[#/]album\?id=(\d+)',
             r'music\.163\.com.*album/(\d+)',
         ],
         'playlist': [
-            r'music\.163\.com.*playlist\?id=(\d+)',
+            r'music\.163\.com.*[#/]playlist\?id=(\d+)',
             r'music\.163\.com.*playlist/(\d+)',
         ],
     }
     
-    # 音质映射
+    # 音质映射 - 网易云 API 参数
     QUALITY_MAP = {
-        '标准': 'standard',
-        '较高': 'higher',
-        '极高': 'exhigh',
-        '无损': 'lossless',
-        'standard': 'standard',
-        'higher': 'higher',
-        'exhigh': 'exhigh', 
-        'lossless': 'lossless',
+        '标准': 128000,
+        '较高': 192000,
+        '极高': 320000,
+        '无损': 999000,
+        '128k': 128000,
+        '192k': 192000,
+        '320k': 320000,
+        'flac': 999000,
+        'lossless': 999000,
     }
     
-    # 可用的第三方 API 列表
-    API_SERVERS = [
-        'https://netease-cloud-music-api-five-roan-99.vercel.app',
-        'https://music-api.gdstudio.xyz',
-        'https://netease.api.moe',
-    ]
+    # 音质降级顺序
+    QUALITY_FALLBACK = ['flac', '320k', '192k', '128k']
     
     def __init__(self, config_manager=None):
         super().__init__(config_manager)
         
         self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'application/json',
-        })
         
-        # 选择可用的 API 服务器
-        self.api_base = None
-        self._select_api_server()
+        # 网易云音乐官方 API 配置
+        self.api_url = "https://music.163.com"
+        
+        # 设置请求头
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Referer': 'https://music.163.com/',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Connection': 'keep-alive',
+        })
         
         # 加载配置
         self._load_config()
@@ -77,31 +78,7 @@ class NeteaseDownloader(BaseDownloader):
         # 加载 cookies
         self._load_cookies()
         
-        logger.info("✅ 网易云音乐下载器初始化完成")
-    
-    def _select_api_server(self):
-        """选择可用的 API 服务器"""
-        # 从配置获取自定义 API 地址
-        custom_api = self.get_config('netease_api_url', '')
-        if custom_api:
-            self.api_base = custom_api.rstrip('/')
-            logger.info(f"📡 使用自定义 API: {self.api_base}")
-            return
-        
-        # 测试预设的 API 服务器
-        for api_url in self.API_SERVERS:
-            try:
-                response = self.session.get(f"{api_url}/", timeout=5)
-                if response.status_code == 200:
-                    self.api_base = api_url
-                    logger.info(f"📡 使用 API 服务器: {self.api_base}")
-                    return
-            except Exception:
-                continue
-        
-        # 如果没有可用的服务器，使用第一个
-        self.api_base = self.API_SERVERS[0]
-        logger.warning(f"⚠️ 使用默认 API 服务器: {self.api_base}")
+        logger.info("✅ 网易云音乐下载器初始化完成 (官方 API)")
     
     def _load_config(self):
         """加载配置"""
@@ -116,20 +93,24 @@ class NeteaseDownloader(BaseDownloader):
 
     def _load_cookies(self):
         """加载 cookies"""
+        # 优先从配置获取
         cookies_str = self.get_config('netease_cookies', '')
         
         if cookies_str:
             self._parse_cookies(cookies_str)
             return
         
+        # 从环境变量获取
         cookies_env = os.getenv('NCM_COOKIES', '')
         if cookies_env:
             self._parse_cookies(cookies_env)
             return
         
+        # 从文件获取
         cookie_paths = [
             '/app/cookies/ncm_cookies.txt',
             './cookies/ncm_cookies.txt',
+            './ncm_cookies.txt',
         ]
         
         for path in cookie_paths:
@@ -149,10 +130,12 @@ class NeteaseDownloader(BaseDownloader):
         """解析 cookies 字符串"""
         try:
             if cookies_str.startswith('{'):
+                # JSON 格式
                 cookies_dict = json.loads(cookies_str)
                 for name, value in cookies_dict.items():
                     self.session.cookies.set(name, str(value), domain='.music.163.com')
             else:
+                # 字符串格式: name=value; name2=value2
                 for cookie in cookies_str.split(';'):
                     if '=' in cookie:
                         name, value = cookie.strip().split('=', 1)
@@ -176,6 +159,12 @@ class NeteaseDownloader(BaseDownloader):
         if not self.is_supported_url(url):
             return None
         
+        # 如果是短链接，先解析
+        if '163cn.tv' in url:
+            resolved = self._resolve_short_url(url)
+            if resolved:
+                return resolved
+        
         for content_type, patterns in self.URL_PATTERNS.items():
             for pattern in patterns:
                 match = re.search(pattern, url)
@@ -186,32 +175,106 @@ class NeteaseDownloader(BaseDownloader):
                         'url': url
                     }
         return None
+    
+    def _resolve_short_url(self, short_url: str) -> Optional[Dict[str, Any]]:
+        """解析网易云短链接"""
+        try:
+            logger.info(f"🔗 解析短链接: {short_url}")
+            
+            response = self.session.get(short_url, allow_redirects=True, timeout=10)
+            final_url = response.url
+            
+            logger.info(f"🔗 重定向到: {final_url}")
+            
+            # 从最终 URL 提取信息
+            if 'music.163.com' in final_url:
+                # 单曲
+                song_match = re.search(r'(?:#/song\?id=|/song\?.*?id=)(\d+)', final_url)
+                if song_match:
+                    return {'type': 'song', 'id': song_match.group(1), 'url': final_url}
+                
+                # 专辑
+                album_match = re.search(r'(?:#/album\?id=|/album\?.*?id=)(\d+)', final_url)
+                if album_match:
+                    return {'type': 'album', 'id': album_match.group(1), 'url': final_url}
+                
+                # 歌单
+                playlist_match = re.search(r'(?:#/playlist\?id=|/playlist\?.*?id=)(\d+)', final_url)
+                if playlist_match:
+                    return {'type': 'playlist', 'id': playlist_match.group(1), 'url': final_url}
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ 解析短链接失败: {e}")
+            return None
 
-    # ============ API 调用 ============
+    # ============ 官方 API 调用 ============
+    
+    def search_songs(self, keyword: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """搜索歌曲"""
+        try:
+            url = f"{self.api_url}/api/search/get/web"
+            params = {
+                'csrf_token': '',
+                's': keyword,
+                'type': '1',  # 1=歌曲, 10=专辑, 1000=歌单
+                'offset': '0',
+                'total': 'true',
+                'limit': str(limit)
+            }
+            
+            logger.info(f"🔍 搜索歌曲: {keyword}")
+            
+            response = self.session.get(url, params=params, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get('code') == 200 and data.get('result'):
+                songs = data['result'].get('songs', [])
+                result = []
+                for song in songs:
+                    result.append({
+                        'id': str(song.get('id')),
+                        'name': song.get('name', 'Unknown'),
+                        'artist': ', '.join([a.get('name', '') for a in song.get('artists', [])]),
+                        'album': song.get('album', {}).get('name', 'Unknown'),
+                        'duration': song.get('duration', 0) // 1000,
+                        'cover': song.get('album', {}).get('picUrl', ''),
+                    })
+                logger.info(f"✅ 搜索到 {len(result)} 首歌曲")
+                return result
+            
+            logger.warning(f"⚠️ 搜索失败: {data.get('msg', '未知错误')}")
+            return []
+            
+        except Exception as e:
+            logger.error(f"❌ 搜索歌曲失败: {e}")
+            return []
     
     def get_song_info(self, song_id: str) -> Optional[Dict[str, Any]]:
-        """获取歌曲详情 - 使用第三方 API"""
+        """获取歌曲详情"""
         try:
-            # 使用第三方 API
-            url = f"{self.api_base}/song/detail"
-            params = {'ids': song_id}
+            url = f"{self.api_url}/api/song/detail"
+            params = {'ids': f'[{song_id}]'}
             
-            response = self.session.get(url, params=params, timeout=30)
-            result = response.json()
+            response = self.session.get(url, params=params, timeout=15)
+            response.raise_for_status()
+            data = response.json()
             
-            if result.get('code') == 200 and result.get('songs'):
-                song = result['songs'][0]
+            if data.get('code') == 200 and data.get('songs'):
+                song = data['songs'][0]
                 return {
                     'id': str(song['id']),
                     'name': song['name'],
-                    'artist': '/'.join([ar['name'] for ar in song.get('ar', [])]),
-                    'album': song.get('al', {}).get('name', ''),
-                    'album_id': song.get('al', {}).get('id'),
-                    'cover': song.get('al', {}).get('picUrl', ''),
-                    'duration': song.get('dt', 0) // 1000,
+                    'artist': ', '.join([a['name'] for a in song.get('artists', [])]),
+                    'album': song.get('album', {}).get('name', ''),
+                    'album_id': song.get('album', {}).get('id'),
+                    'cover': song.get('album', {}).get('picUrl', ''),
+                    'duration': song.get('duration', 0) // 1000,
                 }
             
-            logger.warning(f"⚠️ 获取歌曲信息失败: code={result.get('code')}")
+            logger.warning(f"⚠️ 获取歌曲信息失败: {song_id}")
             return None
             
         except Exception as e:
@@ -219,37 +282,37 @@ class NeteaseDownloader(BaseDownloader):
             return None
     
     def get_song_url(self, song_id: str, quality: str = None) -> Optional[Dict[str, Any]]:
-        """获取歌曲下载链接 - 使用第三方 API"""
+        """获取歌曲下载链接 - 使用官方 API"""
         try:
-            level = self.QUALITY_MAP.get(quality or self.quality, 'lossless')
+            br = self.QUALITY_MAP.get(quality or self.quality, 999000)
             
-            # 使用第三方 API
-            url = f"{self.api_base}/song/url/v1"
+            url = f"{self.api_url}/api/song/enhance/player/url"
             params = {
-                'id': song_id,
-                'level': level
+                'ids': f'[{song_id}]',
+                'br': br,
             }
             
-            # 如果有 cookies，添加到请求
-            cookies_str = self.get_config('netease_cookies', '')
-            if cookies_str:
-                params['cookie'] = cookies_str
+            logger.info(f"🔗 请求音乐链接: {song_id} (音质参数: {br})")
             
-            response = self.session.get(url, params=params, timeout=30)
-            result = response.json()
+            response = self.session.get(url, params=params, timeout=15)
+            response.raise_for_status()
+            data = response.json()
             
-            if result.get('code') == 200 and result.get('data'):
-                song_data = result['data'][0]
-                if song_data.get('url'):
+            if data.get('code') == 200 and data.get('data'):
+                song_data = data['data'][0]
+                music_url = song_data.get('url')
+                
+                if music_url:
+                    file_format = self._extract_format_from_url(music_url)
+                    logger.info(f"✅ 获取音乐链接成功: {song_id}, 格式: {file_format}")
                     return {
-                        'url': song_data['url'],
+                        'url': music_url,
                         'size': song_data.get('size', 0),
-                        'type': song_data.get('type', 'mp3'),
-                        'level': song_data.get('level', level),
-                        'bitrate': song_data.get('br', 0),
+                        'type': file_format,
+                        'br': song_data.get('br', 0),
                     }
                 else:
-                    logger.warning(f"⚠️ 歌曲无下载链接，可能需要VIP或配置cookies")
+                    logger.warning(f"⚠️ 音乐链接为空，可能需要 VIP 或版权限制: {song_id}")
             
             return None
             
@@ -257,18 +320,60 @@ class NeteaseDownloader(BaseDownloader):
             logger.error(f"❌ 获取歌曲URL失败: {e}")
             return None
     
+    def get_song_url_with_fallback(self, song_id: str, preferred_quality: str = None) -> Optional[Dict[str, Any]]:
+        """获取歌曲下载链接，支持音质降级"""
+        if not preferred_quality:
+            preferred_quality = self.quality
+        
+        # 确定起始位置
+        start_idx = 0
+        quality_key = preferred_quality.lower().replace('无损', 'flac').replace('极高', '320k').replace('较高', '192k').replace('标准', '128k')
+        
+        if quality_key in self.QUALITY_FALLBACK:
+            start_idx = self.QUALITY_FALLBACK.index(quality_key)
+        
+        # 按降级顺序尝试
+        for quality in self.QUALITY_FALLBACK[start_idx:]:
+            result = self.get_song_url(song_id, quality)
+            if result and result.get('url'):
+                logger.info(f"✅ 使用音质: {quality}")
+                return result
+            time.sleep(0.3)
+        
+        logger.warning(f"⚠️ 所有音质都无法获取: {song_id}")
+        return None
+    
+    def _extract_format_from_url(self, url: str) -> str:
+        """从 URL 推断文件格式"""
+        url_lower = url.lower()
+        if '.flac' in url_lower:
+            return 'flac'
+        elif '.mp3' in url_lower:
+            return 'mp3'
+        elif '.m4a' in url_lower:
+            return 'm4a'
+        elif '.wav' in url_lower:
+            return 'wav'
+        return 'mp3'
+    
     def get_lyrics(self, song_id: str) -> Optional[str]:
-        """获取歌词 - 使用第三方 API"""
+        """获取歌词"""
         try:
-            url = f"{self.api_base}/lyric"
-            params = {'id': song_id}
+            url = f"{self.api_url}/api/song/lyric"
+            params = {
+                'id': song_id,
+                'lv': 1,
+                'tv': 1,
+                'rv': 1,
+            }
             
-            response = self.session.get(url, params=params, timeout=30)
-            result = response.json()
+            response = self.session.get(url, params=params, timeout=15)
+            response.raise_for_status()
+            data = response.json()
             
-            if result.get('code') == 200:
-                lrc = result.get('lrc', {}).get('lyric', '')
-                tlyric = result.get('tlyric', {}).get('lyric', '')
+            if data.get('code') == 200:
+                lrc = data.get('lrc', {}).get('lyric', '')
+                tlyric = data.get('tlyric', {}).get('lyric', '')
                 
                 if self.lyrics_merge and tlyric:
                     return f"{lrc}\n\n--- 翻译 ---\n\n{tlyric}"
@@ -280,6 +385,81 @@ class NeteaseDownloader(BaseDownloader):
             logger.error(f"❌ 获取歌词失败: {e}")
             return None
 
+    # ============ 专辑/歌单 API ============
+    
+    def get_album_songs(self, album_id: str) -> List[Dict[str, Any]]:
+        """获取专辑歌曲列表"""
+        try:
+            url = f"{self.api_url}/api/album/{album_id}"
+            
+            response = self.session.get(url, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get('code') == 200:
+                album_info = data.get('album', {})
+                songs = data.get('songs', [])
+                
+                result = []
+                for i, song in enumerate(songs, 1):
+                    result.append({
+                        'id': str(song['id']),
+                        'name': song['name'],
+                        'artist': ', '.join([a['name'] for a in song.get('artists', [])]),
+                        'album': album_info.get('name', ''),
+                        'track_number': i,
+                        'cover': album_info.get('picUrl', ''),
+                    })
+                
+                logger.info(f"✅ 获取专辑歌曲: {len(result)} 首")
+                return result
+            
+            return []
+            
+        except Exception as e:
+            logger.error(f"❌ 获取专辑歌曲失败: {e}")
+            return []
+    
+    def get_playlist_songs(self, playlist_id: str) -> List[Dict[str, Any]]:
+        """获取歌单歌曲列表"""
+        try:
+            url = f"{self.api_url}/api/playlist/detail"
+            params = {
+                'id': playlist_id,
+                'csrf_token': ''
+            }
+            
+            response = self.session.get(url, params=params, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get('code') == 200 and data.get('result'):
+                playlist = data['result']
+                tracks = playlist.get('tracks', [])
+                
+                result = []
+                for i, song in enumerate(tracks, 1):
+                    artists = song.get('artists', []) or song.get('ar', [])
+                    album = song.get('album', {}) or song.get('al', {})
+                    
+                    result.append({
+                        'id': str(song['id']),
+                        'name': song['name'],
+                        'artist': ', '.join([a['name'] for a in artists]) if artists else '未知',
+                        'album': album.get('name', '未知'),
+                        'track_number': i,
+                        'cover': album.get('picUrl', ''),
+                    })
+                
+                logger.info(f"✅ 获取歌单歌曲: {len(result)} 首")
+                return result
+            
+            return []
+            
+        except Exception as e:
+            logger.error(f"❌ 获取歌单歌曲失败: {e}")
+            return []
+
     # ============ 下载功能 ============
     
     def download_song(self, song_id: str, download_dir: str,
@@ -287,19 +467,34 @@ class NeteaseDownloader(BaseDownloader):
                      progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
         """下载单曲"""
         try:
+            # 获取歌曲信息
             song_info = self.get_song_info(song_id)
             if not song_info:
                 return {'success': False, 'error': '无法获取歌曲信息'}
             
-            song_url_info = self.get_song_url(song_id, quality)
-            if not song_url_info:
-                return {'success': False, 'error': '无法获取下载链接，可能需要VIP'}
+            # 获取下载链接（支持降级）
+            song_url_info = self.get_song_url_with_fallback(song_id, quality)
+            if not song_url_info or not song_url_info.get('url'):
+                return {'success': False, 'error': '无法获取下载链接，可能需要 VIP 或配置 cookies'}
             
             # 构建文件名和目录
             filename = self._build_filename(song_info, song_url_info.get('type', 'mp3'))
             save_dir = self._build_directory(download_dir, song_info)
             self.ensure_dir(save_dir)
             filepath = os.path.join(save_dir, filename)
+            
+            # 检查是否已存在
+            if os.path.exists(filepath):
+                file_size = os.path.getsize(filepath)
+                logger.info(f"📁 文件已存在: {filename}")
+                return {
+                    'success': True,
+                    'song_title': song_info['name'],
+                    'song_artist': song_info['artist'],
+                    'filepath': filepath,
+                    'size_mb': file_size / (1024 * 1024),
+                    'message': '文件已存在',
+                }
             
             if progress_callback:
                 progress_callback({
@@ -312,6 +507,8 @@ class NeteaseDownloader(BaseDownloader):
             success = self._download_file(song_url_info['url'], filepath, progress_callback)
             
             if success:
+                file_size = os.path.getsize(filepath) if os.path.exists(filepath) else 0
+                
                 # 下载歌词
                 if self.download_lyrics:
                     lyrics = self.get_lyrics(song_id)
@@ -319,19 +516,21 @@ class NeteaseDownloader(BaseDownloader):
                         lrc_path = os.path.splitext(filepath)[0] + '.lrc'
                         with open(lrc_path, 'w', encoding='utf-8') as f:
                             f.write(lyrics)
+                        logger.info(f"✅ 歌词已保存: {lrc_path}")
                 
                 # 下载封面
                 if self.download_cover and song_info.get('cover'):
-                    cover_path = os.path.splitext(filepath)[0] + '.jpg'
-                    self._download_file(song_info['cover'], cover_path)
+                    cover_path = os.path.join(save_dir, 'cover.jpg')
+                    if not os.path.exists(cover_path):
+                        self._download_file(song_info['cover'], cover_path)
                 
                 return {
                     'success': True,
                     'song_title': song_info['name'],
                     'song_artist': song_info['artist'],
                     'filepath': filepath,
-                    'size_mb': os.path.getsize(filepath) / (1024 * 1024),
-                    'quality': song_url_info.get('level', ''),
+                    'size_mb': file_size / (1024 * 1024),
+                    'quality': f"{song_url_info.get('br', 0) // 1000}k",
                 }
             
             return {'success': False, 'error': '下载失败'}
@@ -339,80 +538,6 @@ class NeteaseDownloader(BaseDownloader):
         except Exception as e:
             logger.error(f"❌ 下载歌曲失败: {e}")
             return {'success': False, 'error': str(e)}
-    
-    def _build_filename(self, song_info: Dict, ext: str) -> str:
-        """构建文件名"""
-        filename = self.song_file_format.replace('{SongName}', song_info.get('name', 'Unknown'))
-        filename = filename.replace('{ArtistName}', song_info.get('artist', 'Unknown'))
-        filename = self.clean_filename(filename)
-        return f"{filename}.{ext}"
-    
-    def _build_directory(self, base_dir: str, song_info: Dict) -> str:
-        """构建保存目录"""
-        path = self.dir_format.replace('{ArtistName}', self.clean_filename(song_info.get('artist', 'Unknown')))
-        path = path.replace('{AlbumName}', self.clean_filename(song_info.get('album', 'Unknown')))
-        return os.path.join(base_dir, path)
-    
-    def _download_file(self, url: str, filepath: str,
-                      progress_callback: Optional[Callable] = None) -> bool:
-        """下载文件"""
-        try:
-            response = self.session.get(url, stream=True, timeout=300)
-            response.raise_for_status()
-            
-            total_size = int(response.headers.get('content-length', 0))
-            downloaded = 0
-            
-            with open(filepath, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        
-                        if progress_callback and total_size > 0:
-                            progress = (downloaded / total_size) * 100
-                            progress_callback({
-                                'status': 'progress',
-                                'percent': progress,
-                                'downloaded': downloaded,
-                                'total': total_size,
-                            })
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ 下载文件失败: {e}")
-            return False
-
-    # ============ 专辑/歌单 ============
-    
-    def get_album_songs(self, album_id: str) -> List[Dict[str, Any]]:
-        """获取专辑歌曲列表 - 使用第三方 API"""
-        try:
-            url = f"{self.api_base}/album"
-            params = {'id': album_id}
-            
-            response = self.session.get(url, params=params, timeout=30)
-            result = response.json()
-            
-            if result.get('code') == 200:
-                album_info = result.get('album', {})
-                songs = result.get('songs', [])
-                return [
-                    {
-                        'id': str(song['id']),
-                        'name': song['name'],
-                        'artist': '/'.join([ar['name'] for ar in song.get('ar', [])]),
-                        'album': album_info.get('name', ''),
-                    }
-                    for song in songs
-                ]
-            
-            return []
-            
-        except Exception as e:
-            logger.error(f"❌ 获取专辑歌曲失败: {e}")
-            return []
     
     def download_album(self, album_id: str, download_dir: str,
                       quality: str = None,
@@ -450,46 +575,6 @@ class NeteaseDownloader(BaseDownloader):
         
         return results
     
-    def get_playlist_songs(self, playlist_id: str) -> List[Dict[str, Any]]:
-        """获取歌单歌曲列表 - 使用第三方 API"""
-        try:
-            url = f"{self.api_base}/playlist/detail"
-            params = {'id': playlist_id}
-            
-            response = self.session.get(url, params=params, timeout=30)
-            result = response.json()
-            
-            if result.get('code') == 200:
-                playlist = result.get('playlist', {})
-                tracks = playlist.get('tracks', [])
-                
-                if not tracks:
-                    # 如果 tracks 为空，需要单独获取歌曲详情
-                    track_ids = playlist.get('trackIds', [])
-                    songs = []
-                    for track in track_ids[:100]:  # 限制100首
-                        song_info = self.get_song_info(str(track['id']))
-                        if song_info:
-                            songs.append(song_info)
-                        time.sleep(0.2)
-                    return songs
-                
-                return [
-                    {
-                        'id': str(song['id']),
-                        'name': song['name'],
-                        'artist': '/'.join([ar['name'] for ar in song.get('ar', [])]),
-                        'album': song.get('al', {}).get('name', ''),
-                    }
-                    for song in tracks
-                ]
-            
-            return []
-            
-        except Exception as e:
-            logger.error(f"❌ 获取歌单歌曲失败: {e}")
-            return []
-    
     def download_playlist(self, playlist_id: str, download_dir: str,
                          quality: str = None,
                          progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
@@ -525,3 +610,51 @@ class NeteaseDownloader(BaseDownloader):
             time.sleep(0.5)
         
         return results
+    
+    def _build_filename(self, song_info: Dict, ext: str) -> str:
+        """构建文件名"""
+        filename = self.song_file_format.replace('{SongName}', song_info.get('name', 'Unknown'))
+        filename = filename.replace('{ArtistName}', song_info.get('artist', 'Unknown'))
+        filename = self.clean_filename(filename)
+        return f"{filename}.{ext}"
+    
+    def _build_directory(self, base_dir: str, song_info: Dict) -> str:
+        """构建保存目录"""
+        path = self.dir_format.replace('{ArtistName}', self.clean_filename(song_info.get('artist', 'Unknown')))
+        path = path.replace('{AlbumName}', self.clean_filename(song_info.get('album', 'Unknown')))
+        return os.path.join(base_dir, path)
+    
+    def _download_file(self, url: str, filepath: str,
+                      progress_callback: Optional[Callable] = None) -> bool:
+        """下载文件"""
+        try:
+            response = self.session.get(url, stream=True, timeout=300)
+            response.raise_for_status()
+            
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded = 0
+            
+            # 确保目录存在
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            
+            with open(filepath, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        
+                        if progress_callback and total_size > 0:
+                            progress = (downloaded / total_size) * 100
+                            progress_callback({
+                                'status': 'progress',
+                                'percent': progress,
+                                'downloaded': downloaded,
+                                'total': total_size,
+                            })
+            
+            logger.info(f"✅ 下载完成: {filepath}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ 下载文件失败: {e}")
+            return False

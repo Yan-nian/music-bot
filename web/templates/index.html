@@ -558,14 +558,7 @@
                 </div>
             </div>
 
-            <div class="config-group">
-                <h3>API 设置（高级）</h3>
-                <div class="form-group">
-                    <label>自定义 API 地址</label>
-                    <input type="text" id="netease_api_url" placeholder="留空使用默认 API，如需自建可填入地址">
-                    <small>推荐使用 <a href="https://github.com/Binaryify/NeteaseCloudMusicApi" target="_blank">NeteaseCloudMusicApi</a> 部署</small>
-                </div>
-            </div>
+
 
             <div class="btn-group">
                 <button class="btn btn-primary" onclick="saveConfig('netease')">💾 保存配置</button>
@@ -790,7 +783,7 @@
         // 配置字段映射
         const configFields = {
             telegram: ['telegram_bot_token', 'telegram_allowed_users', 'telegram_api_id', 'telegram_api_hash', 'telegram_session_string'],
-            netease: ['netease_enabled', 'netease_quality', 'netease_song_file_format', 'netease_dir_format', 'netease_album_folder_format', 'netease_download_lyrics', 'netease_download_cover', 'netease_lyrics_merge', 'netease_cookies', 'netease_api_url'],
+            netease: ['netease_enabled', 'netease_quality', 'netease_song_file_format', 'netease_dir_format', 'netease_album_folder_format', 'netease_download_lyrics', 'netease_download_cover', 'netease_lyrics_merge', 'netease_cookies'],
             apple: ['apple_music_enabled', 'apple_music_quality', 'apple_music_region', 'apple_music_decrypt_host', 'apple_music_get_host', 'apple_music_download_lyrics', 'apple_music_download_cover', 'apple_music_cookies'],
             youtube: ['youtube_music_enabled', 'youtube_music_quality', 'youtube_music_format', 'youtube_music_download_cover', 'youtube_music_cookies'],
             general: ['download_path', 'proxy_enabled', 'proxy_host', 'log_level', 'log_to_file', 'log_to_console']

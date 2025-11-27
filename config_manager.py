@@ -35,9 +35,11 @@ class ConfigManager:
         # 通用下载配置
         "download_path": "/downloads",
         "auto_download_enabled": True,
+        "send_to_telegram": False,  # 是否发送到 Telegram
         
         # 网易云音乐配置
         "netease_enabled": True,
+        "netease_download_path": "/downloads/netease",  # 网易云单独下载路径
         "netease_quality": "无损",  # 标准/较高/极高/无损
         "netease_download_lyrics": True,
         "netease_download_cover": True,
@@ -49,6 +51,7 @@ class ConfigManager:
         
         # Apple Music 配置
         "apple_music_enabled": True,
+        "apple_music_download_path": "/downloads/apple_music",  # Apple Music 单独下载路径
         "apple_music_quality": "lossless",  # aac/lossless/atmos
         "apple_music_download_lyrics": True,
         "apple_music_download_cover": True,
@@ -59,6 +62,7 @@ class ConfigManager:
         
         # YouTube Music 配置
         "youtube_music_enabled": True,
+        "youtube_music_download_path": "/downloads/youtube_music",  # YouTube Music 单独下载路径
         "youtube_music_quality": "best",  # best/320k/256k/128k
         "youtube_music_format": "m4a",  # m4a/mp3
         "youtube_music_download_cover": True,

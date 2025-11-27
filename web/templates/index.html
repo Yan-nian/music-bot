@@ -497,6 +497,14 @@
             </div>
 
             <div class="config-group">
+                <h3>存储设置</h3>
+                <div class="form-group">
+                    <label>下载保存路径</label>
+                    <input type="text" id="netease_download_path" placeholder="/downloads/netease">
+                </div>
+            </div>
+
+            <div class="config-group">
                 <h3>下载设置</h3>
                 <div class="form-row">
                     <div class="form-group">
@@ -575,6 +583,14 @@
                     <input type="checkbox" id="apple_music_enabled">
                     <span class="slider"></span>
                 </label>
+            </div>
+
+            <div class="config-group">
+                <h3>存储设置</h3>
+                <div class="form-group">
+                    <label>下载保存路径</label>
+                    <input type="text" id="apple_music_download_path" placeholder="/downloads/apple_music">
+                </div>
             </div>
 
             <div class="config-group">
@@ -662,6 +678,14 @@
             </div>
 
             <div class="config-group">
+                <h3>存储设置</h3>
+                <div class="form-group">
+                    <label>下载保存路径</label>
+                    <input type="text" id="youtube_music_download_path" placeholder="/downloads/youtube_music">
+                </div>
+            </div>
+
+            <div class="config-group">
                 <h3>下载设置</h3>
                 <div class="form-row">
                     <div class="form-group">
@@ -717,8 +741,15 @@
             <div class="config-group">
                 <h3>存储设置</h3>
                 <div class="form-group">
-                    <label>下载保存路径</label>
+                    <label>默认下载保存路径（每个平台可单独设置）</label>
                     <input type="text" id="download_path" placeholder="/downloads">
+                </div>
+                <div class="switch-group">
+                    <span class="switch-label">发送到 Telegram（关闭则仅保存到本地）</span>
+                    <label class="switch">
+                        <input type="checkbox" id="send_to_telegram">
+                        <span class="slider"></span>
+                    </label>
                 </div>
             </div>
 
@@ -783,10 +814,10 @@
         // 配置字段映射
         const configFields = {
             telegram: ['telegram_bot_token', 'telegram_allowed_users', 'telegram_api_id', 'telegram_api_hash', 'telegram_session_string'],
-            netease: ['netease_enabled', 'netease_quality', 'netease_song_file_format', 'netease_dir_format', 'netease_album_folder_format', 'netease_download_lyrics', 'netease_download_cover', 'netease_lyrics_merge', 'netease_cookies'],
-            apple: ['apple_music_enabled', 'apple_music_quality', 'apple_music_region', 'apple_music_decrypt_host', 'apple_music_get_host', 'apple_music_download_lyrics', 'apple_music_download_cover', 'apple_music_cookies'],
-            youtube: ['youtube_music_enabled', 'youtube_music_quality', 'youtube_music_format', 'youtube_music_download_cover', 'youtube_music_cookies'],
-            general: ['download_path', 'proxy_enabled', 'proxy_host', 'log_level', 'log_to_file', 'log_to_console']
+            netease: ['netease_enabled', 'netease_download_path', 'netease_quality', 'netease_song_file_format', 'netease_dir_format', 'netease_album_folder_format', 'netease_download_lyrics', 'netease_download_cover', 'netease_lyrics_merge', 'netease_cookies'],
+            apple: ['apple_music_enabled', 'apple_music_download_path', 'apple_music_quality', 'apple_music_region', 'apple_music_decrypt_host', 'apple_music_get_host', 'apple_music_download_lyrics', 'apple_music_download_cover', 'apple_music_cookies'],
+            youtube: ['youtube_music_enabled', 'youtube_music_download_path', 'youtube_music_quality', 'youtube_music_format', 'youtube_music_download_cover', 'youtube_music_cookies'],
+            general: ['download_path', 'send_to_telegram', 'proxy_enabled', 'proxy_host', 'log_level', 'log_to_file', 'log_to_console']
         };
 
         // 显示 Toast 通知

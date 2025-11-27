@@ -139,65 +139,14 @@ class MusicBot:
         
         await update.message.reply_text('\n'.join(status_lines), parse_mode=ParseMode.MARKDOWN)
     
-    async def send_audio_file(self, update: Update, filepath: str, song_title: str, song_artist: str):
-        """发送音频文件到 Telegram"""
-        try:
-            file_size = os.path.getsize(filepath)
-            max_size = 50 * 1024 * 1024  # 50MB Telegram Bot API 限制
-            
-            if file_size > max_size:
-                # 文件太大，尝试使用 Telethon（如果配置了 Session）
-                session_string = self.config.get('telegram_session_string', '')
-                if session_string:
-                    try:
-                        from telethon import TelegramClient
-                        from telethon.sessions import StringSession
-                        
-                        api_id = int(self.config.get('telegram_api_id', 0))
-                        api_hash = self.config.get('telegram_api_hash', '')
-                        
-                        if api_id and api_hash:
-                            client = TelegramClient(StringSession(session_string), api_id, api_hash)
-                            await client.connect()
-                            
-                            await client.send_file(
-                                update.effective_chat.id,
-                                filepath,
-                                caption=f"🎵 {song_title}\n🎤 {song_artist}",
-                                attributes=[]
-                            )
-                            
-                            await client.disconnect()
-                            logger.info(f"✅ 通过 Telethon 发送大文件成功: {filepath}")
-                            return True
-                    except Exception as e:
-                        logger.error(f"Telethon 发送失败: {e}")
-                
-                await update.message.reply_text(
-                    f"⚠️ 文件过大 ({file_size / (1024*1024):.1f} MB)，无法通过 Bot API 发送\n"
-                    f"💡 请配置 Telegram Session 以支持大文件发送"
-                )
-                return False
-            
-            # 使用 Bot API 发送
-            with open(filepath, 'rb') as audio:
-                await update.message.reply_audio(
-                    audio=audio,
-                    title=song_title,
-                    performer=song_artist,
-                    caption=f"🎵 {song_title}\n🎤 {song_artist}"
-                )
-            
-            logger.info(f"✅ 发送音频文件成功: {filepath}")
-            return True
-            
-        except TelegramError as e:
-            logger.error(f"发送音频失败: {e}")
-            await update.message.reply_text(f"⚠️ 发送文件失败: {e}")
-            return False
-        except Exception as e:
-            logger.error(f"发送音频异常: {e}")
-            return False
+    def get_download_path_for_platform(self, platform: str) -> str:
+        """获取平台专属的下载路径"""
+        platform_paths = {
+            'netease': self.config.get('netease_download_path', '/downloads/netease'),
+            'apple_music': self.config.get('apple_music_download_path', '/downloads/apple_music'),
+            'youtube_music': self.config.get('youtube_music_download_path', '/downloads/youtube_music'),
+        }
+        return platform_paths.get(platform, self.download_path)
     
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理消息"""
@@ -247,7 +196,8 @@ class MusicBot:
             )
             
             # 下载
-            download_dir = os.path.join(self.download_path, downloader_name.replace('_', '/'))
+            # 使用平台专属下载路径
+            download_dir = self.get_download_path_for_platform(downloader_name)
             
             if content_type == 'song':
                 result = downloader.download_song(content_id, download_dir)
@@ -258,65 +208,22 @@ class MusicBot:
             else:
                 result = {'success': False, 'error': f'不支持的类型: {content_type}'}
             
-            # 发送结果
+            # 只保存到本地，不发送到 Telegram
             if result.get('success'):
-                # 发送音频文件
                 if content_type == 'song':
-                    filepath = result.get('filepath')
-                    if filepath and os.path.exists(filepath):
-                        await progress_msg.edit_text("📤 正在发送文件...")
-                        sent = await self.send_audio_file(
-                            update, 
-                            filepath, 
-                            result.get('song_title', '未知'),
-                            result.get('song_artist', '未知')
-                        )
-                        if sent:
-                            await progress_msg.edit_text(self._format_success_message(result, content_type))
-                            # 可选：删除本地文件
-                            # os.remove(filepath)
-                        else:
-                            await progress_msg.edit_text(
-                                f"{self._format_success_message(result, content_type)}\n\n"
-                                f"📂 文件已保存到服务器"
-                            )
-                    else:
-                        await progress_msg.edit_text(self._format_success_message(result, content_type))
+                    filepath = result.get('filepath', '')
+                    await progress_msg.edit_text(
+                        f"{self._format_success_message(result, content_type)}\n\n"
+                        f"📂 已保存到: {filepath}"
+                    )
                 
                 elif content_type in ['album', 'playlist']:
-                    # 专辑/歌单：发送所有成功下载的文件
-                    songs = result.get('songs', [])
-                    sent_count = 0
-                    failed_count = 0
-                    
-                    await progress_msg.edit_text(f"📤 正在发送 {len(songs)} 个文件...")
-                    
-                    for song in songs:
-                        if song.get('success'):
-                            filepath = song.get('filepath')
-                            if filepath and os.path.exists(filepath):
-                                sent = await self.send_audio_file(
-                                    update,
-                                    filepath,
-                                    song.get('song_title', '未知'),
-                                    song.get('song_artist', '未知')
-                                )
-                                if sent:
-                                    sent_count += 1
-                                else:
-                                    failed_count += 1
-                                # 避免发送过快
-                                await asyncio.sleep(1)
-                    
                     summary = (
                         f"✅ 下载完成！\n\n"
                         f"📀 {result.get('album_name', result.get('playlist_title', '未知'))}\n"
                         f"📊 已下载: {result.get('downloaded_songs', 0)}/{result.get('total_songs', 0)} 首\n"
-                        f"📤 已发送: {sent_count} 首"
+                        f"📂 保存位置: {download_dir}"
                     )
-                    if failed_count > 0:
-                        summary += f"\n⚠️ 发送失败: {failed_count} 首"
-                    
                     await progress_msg.edit_text(summary)
                 else:
                     await progress_msg.edit_text(self._format_success_message(result, content_type))

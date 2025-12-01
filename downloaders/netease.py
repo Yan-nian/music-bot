@@ -526,13 +526,26 @@ class NeteaseDownloader(BaseDownloader):
     
     def download_song(self, song_id: str, download_dir: str,
                      quality: str = None,
-                     progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
-        """下载单曲"""
+                     progress_callback: Optional[Callable] = None,
+                     extra_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """下载单曲
+        
+        Args:
+            song_id: 歌曲ID
+            download_dir: 下载目录
+            quality: 音质
+            progress_callback: 进度回调
+            extra_metadata: 额外元数据（用于专辑下载时传递track_number等）
+        """
         try:
             # 获取歌曲信息
             song_info = self.get_song_info(song_id)
             if not song_info:
                 return {'success': False, 'error': '无法获取歌曲信息'}
+            
+            # 合并额外元数据（来自专辑/歌单等，包含track_number, total_tracks等）
+            if extra_metadata:
+                song_info.update(extra_metadata)
             
             # 获取下载链接（支持降级）
             song_url_info = self.get_song_url_with_fallback(song_id, quality)
@@ -661,7 +674,16 @@ class NeteaseDownloader(BaseDownloader):
                     'song': song['name'],
                 })
             
-            result = self.download_song(song['id'], download_dir, quality, progress_callback)
+            # 构建额外元数据（从专辑获取的完整信息）
+            extra_metadata = {
+                'track_number': song.get('track_number', i),
+                'total_tracks': song.get('total_tracks', len(songs)),
+                'album_artist': song.get('album_artist', artist_name),
+                'disc_number': song.get('disc_number', '1'),
+                'publish_time': song.get('publish_time'),
+            }
+            
+            result = self.download_song(song['id'], download_dir, quality, progress_callback, extra_metadata)
             results['songs'].append(result)
             
             if result.get('success'):

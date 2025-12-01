@@ -488,11 +488,14 @@ class MusicBot:
                     logger.warning(f"⚠️ 网易云下载器未启用，跳过歌单 {playlist_name}")
                     return
                 
+                # 获取下载目录
+                download_dir = self.config.get('netease_download_path', '/downloads/netease')
+                
                 # 在线程池中执行同步（因为下载是同步操作）
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(
                     None,
-                    lambda: downloader.sync_playlist(playlist_id, self.config_manager)
+                    lambda: downloader.sync_playlist(playlist_id, download_dir)
                 )
                 
                 if result:

@@ -523,33 +523,44 @@ class MusicBot:
                     except Exception:
                         pass
             
-            # 下载 - 使用 asyncio.to_thread 在线程池中执行同步下载，避免阻塞事件循环
-            if content_type == 'song':
-                result = await asyncio.to_thread(
-                    lambda: downloader.download_song(
-                        content_id, download_dir, 
-                        progress_callback=sync_progress_callback
-                    )
-                )
-            elif content_type == 'album':
-                result = await asyncio.to_thread(
-                    lambda: downloader.download_album(
-                        content_id, download_dir,
-                        progress_callback=sync_progress_callback
-                    )
-                )
-            elif content_type == 'playlist':
-                result = await asyncio.to_thread(
-                    lambda: downloader.download_playlist(
-                        content_id, download_dir,
-                        progress_callback=sync_progress_callback
-                    )
-                )
-            else:
-                result = {'success': False, 'error': f'不支持的类型: {content_type}'}
+            # 定义同步下载函数包装器
+            def run_download():
+                """在子线程中执行下载"""
+                try:
+                    if content_type == 'song':
+                        return downloader.download_song(
+                            content_id, download_dir, 
+                            progress_callback=sync_progress_callback
+                        )
+                    elif content_type == 'album':
+                        return downloader.download_album(
+                            content_id, download_dir,
+                            progress_callback=sync_progress_callback
+                        )
+                    elif content_type == 'playlist':
+                        return downloader.download_playlist(
+                            content_id, download_dir,
+                            progress_callback=sync_progress_callback
+                        )
+                    else:
+                        return {'success': False, 'error': f'不支持的类型: {content_type}'}
+                except Exception as e:
+                    logger.error(f"下载线程异常: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    return {'success': False, 'error': str(e)}
+            
+            # 在线程池中执行下载
+            logger.info(f"🚀 开始下载: {content_type} - {content_id}")
+            result = await asyncio.to_thread(run_download)
+            logger.info(f"✅ 下载完成，结果: {result.get('success', False)}")
+            
+            # 等待一小段时间，确保最后的进度更新完成，避免 Telegram API 限制
+            await asyncio.sleep(0.5)
             
             # 处理结果
             if result.get('success'):
+                logger.info(f"📝 准备更新完成消息...")
                 # 保存下载历史
                 if content_type == 'song':
                     self.config_manager.add_download_history(
@@ -577,13 +588,16 @@ class MusicBot:
                     
                     # 参考原项目格式 - 单曲下载完成（进度条风格）
                     success_msg = (
+                        f"✅ 下载完成！\n\n"
                         f"{platform_icon} 音乐：{display_filename}\n"
                         f"💾 大小：{size_mb:.2f}MB\n"
-                        f"⚡ 速度：完成\n"
-                        f"⏳ 预计剩余：0秒\n"
                         f"📊 进度：{progress_bar} (100.0%)"
                     )
-                    await progress_msg.edit_text(success_msg)
+                    try:
+                        await progress_msg.edit_text(success_msg)
+                        logger.info(f"✅ 消息更新成功")
+                    except Exception as e:
+                        logger.error(f"❌ 编辑消息失败: {e}")
                 elif content_type in ['album', 'playlist']:
                     # 构建歌曲列表
                     songs_list = result.get('songs', [])
@@ -655,15 +669,30 @@ class MusicBot:
                             error = song.get('error', '未知错误')
                             summary += f"  • {song_name}: {error}\n"
                     
-                    await progress_msg.edit_text(summary)
+                    try:
+                        await progress_msg.edit_text(summary)
+                        logger.info(f"✅ 专辑/歌单消息更新成功")
+                    except Exception as e:
+                        logger.error(f"❌ 编辑专辑/歌单消息失败: {e}")
                 else:
-                    await progress_msg.edit_text(self._format_success_message(result, content_type))
+                    try:
+                        await progress_msg.edit_text(self._format_success_message(result, content_type))
+                    except Exception as e:
+                        logger.error(f"❌ 编辑消息失败: {e}")
             else:
-                await progress_msg.edit_text(f"❌ 下载失败\n{result.get('error', '未知错误')}")
+                try:
+                    await progress_msg.edit_text(f"❌ 下载失败\n{result.get('error', '未知错误')}")
+                except Exception as e:
+                    logger.error(f"❌ 编辑失败消息失败: {e}")
             
         except Exception as e:
             logger.error(f"下载错误: {e}")
-            await progress_msg.edit_text(f"❌ 下载出错: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            try:
+                await progress_msg.edit_text(f"❌ 下载出错: {str(e)}")
+            except Exception:
+                pass
     
     def _extract_url(self, text: str) -> Optional[str]:
         """从文本中提取 URL"""

@@ -214,6 +214,10 @@ class ConfigManager:
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_logs_category ON app_logs(category)')
                 
                 conn.commit()
+                
+                # 数据库迁移：为旧表添加新列
+                self._migrate_database(conn)
+                
                 logger.info(f"✅ 配置数据库初始化成功: {self.db_path}")
                 
                 # 如果表为空，插入默认配置
@@ -227,6 +231,32 @@ class ConfigManager:
         except Exception as e:
             logger.error(f"❌ 数据库初始化失败: {e}")
             raise
+    
+    def _migrate_database(self, conn):
+        """数据库迁移：为旧表添加新列"""
+        cursor = conn.cursor()
+        
+        # 定义需要迁移的列 (表名, 列名, 列定义)
+        migrations = [
+            # playlist_songs 表的新列
+            ("playlist_songs", "fail_reason", "TEXT"),
+            ("playlist_songs", "fail_time", "TIMESTAMP"),
+            ("playlist_songs", "retry_count", "INTEGER DEFAULT 0"),
+        ]
+        
+        for table, column, definition in migrations:
+            try:
+                # 检查列是否存在
+                cursor.execute(f"PRAGMA table_info({table})")
+                columns = [row[1] for row in cursor.fetchall()]
+                
+                if column not in columns:
+                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                    logger.info(f"✅ 数据库迁移: 添加列 {table}.{column}")
+            except Exception as e:
+                logger.warning(f"⚠️ 数据库迁移警告 ({table}.{column}): {e}")
+        
+        conn.commit()
     
     def _insert_default_config(self, cursor):
         """插入默认配置到数据库"""

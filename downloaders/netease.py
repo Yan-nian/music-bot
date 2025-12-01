@@ -737,7 +737,8 @@ class NeteaseDownloader(BaseDownloader):
         return os.path.join(base_dir, path)
     
     def _download_file(self, url: str, filepath: str,
-                      progress_callback: Optional[Callable] = None) -> bool:
+                      progress_callback: Optional[Callable] = None,
+                      display_name: str = None) -> bool:
         """下载文件"""
         try:
             response = self.session.get(url, stream=True, timeout=300)
@@ -745,9 +746,13 @@ class NeteaseDownloader(BaseDownloader):
             
             total_size = int(response.headers.get('content-length', 0))
             downloaded = 0
+            start_time = time.time()
             
             # 确保目录存在
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            
+            # 用于显示的文件名
+            filename = display_name or os.path.basename(filepath)
             
             with open(filepath, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
@@ -757,11 +762,18 @@ class NeteaseDownloader(BaseDownloader):
                         
                         if progress_callback and total_size > 0:
                             progress = (downloaded / total_size) * 100
+                            elapsed = time.time() - start_time
+                            speed = downloaded / elapsed if elapsed > 0 else 0
+                            eta = (total_size - downloaded) / speed if speed > 0 else 0
+                            
                             progress_callback({
-                                'status': 'progress',
+                                'status': 'file_progress',
                                 'percent': progress,
                                 'downloaded': downloaded,
                                 'total': total_size,
+                                'speed': speed,
+                                'eta': eta,
+                                'filename': filename,
                             })
             
             logger.info(f"✅ 下载完成: {filepath}")

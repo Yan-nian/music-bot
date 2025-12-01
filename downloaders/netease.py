@@ -432,8 +432,15 @@ class NeteaseDownloader(BaseDownloader):
                 songs = album_info.get('songs', [])
                 album_name = album_info.get('name', '')
                 album_cover = album_info.get('picUrl', '')
+                # 获取专辑艺术家（用于统一专辑识别）
+                album_artists = album_info.get('artists', [])
+                album_artist = album_artists[0].get('name', '未知') if album_artists else '未知'
+                # 获取专辑发布时间
+                album_publish_time = album_info.get('publishTime', '')
+                # 专辑总曲目数（关键：用于 Plex 识别同一专辑）
+                total_tracks = len(songs)
                 
-                logger.info(f"💿 专辑: {album_name}, 歌曲数: {len(songs)}")
+                logger.info(f"💿 专辑: {album_name}, 艺术家: {album_artist}, 歌曲数: {total_tracks}")
                 
                 if songs:
                     result = []
@@ -441,19 +448,23 @@ class NeteaseDownloader(BaseDownloader):
                         # 原项目使用 'artists' 字段
                         artists = song.get('artists', [])
                         if artists:
-                            # 只取第一个艺术家，避免多艺术家问题
-                            artist_name = artists[0].get('name', '未知')
+                            # 保留完整艺术家列表用于显示，但专辑艺术家统一
+                            artist_name = ', '.join([a.get('name', '') for a in artists])
                         else:
-                            artist_name = '未知'
+                            artist_name = album_artist
                         
                         result.append({
                             'id': str(song['id']),
                             'name': song.get('name', '未知'),
                             'artist': artist_name,
                             'album': album_name,
+                            'album_artist': album_artist,  # 关键：统一的专辑艺术家
                             'track_number': song.get('no', i),  # 使用曲目编号
+                            'total_tracks': total_tracks,  # 关键：专辑总曲目数
+                            'disc_number': song.get('cd', '1'),  # 碟片编号
                             'cover': album_cover,
                             'duration': song.get('duration', 0) // 1000,  # 转换为秒
+                            'publish_time': album_publish_time,  # 专辑发布时间
                         })
                     
                     logger.info(f"✅ 获取专辑歌曲成功: {len(result)} 首")
@@ -862,7 +873,8 @@ class NeteaseDownloader(BaseDownloader):
                 'album': song_info.get('album', ''),
                 'album_artist': song_album_artist,
                 'track_number': str(song_info.get('track_number', '')),
-                'disc_number': '1',
+                'total_tracks': str(song_info.get('total_tracks', '')) if song_info.get('total_tracks') else '',
+                'disc_number': str(song_info.get('disc_number', '1')),
                 'genre': '流行'
             }
             
@@ -954,6 +966,7 @@ class NeteaseDownloader(BaseDownloader):
             album = metadata.get('album', '')
             album_artist = metadata.get('album_artist', artist)
             track_number = str(metadata.get('track_number', '') or '')
+            total_tracks = str(metadata.get('total_tracks', '') or '')
             disc_number = str(metadata.get('disc_number', '1') or '1')
             genre = metadata.get('genre', '流行')
             
@@ -983,7 +996,9 @@ class NeteaseDownloader(BaseDownloader):
                     tags.add(TALB(encoding=3, text=album))
                     tags.add(TPE2(encoding=3, text=album_artist))
                     if track_number:
-                        tags.add(TRCK(encoding=3, text=track_number))
+                        # 格式化曲目号：track/total
+                        trck_value = f"{track_number}/{total_tracks}" if total_tracks else track_number
+                        tags.add(TRCK(encoding=3, text=trck_value))
                     tags.add(TCON(encoding=3, text=genre))
                     
                     # 处理时间字段
@@ -1022,6 +1037,9 @@ class NeteaseDownloader(BaseDownloader):
                     audio['ALBUMARTIST'] = album_artist
                     if track_number:
                         audio['TRACKNUMBER'] = track_number
+                    if total_tracks:
+                        audio['TOTALTRACKS'] = total_tracks
+                        audio['TRACKTOTAL'] = total_tracks
                     
                     if metadata.get('date'):
                         audio['DATE'] = metadata['date']
@@ -1071,7 +1089,9 @@ class NeteaseDownloader(BaseDownloader):
                     
                     if track_number:
                         try:
-                            audio['trkn'] = [(int(track_number), 0)]
+                            # M4A 的 trkn 格式: (track_number, total_tracks)
+                            total = int(total_tracks) if total_tracks else 0
+                            audio['trkn'] = [(int(track_number), total)]
                         except (ValueError, TypeError):
                             pass
                     

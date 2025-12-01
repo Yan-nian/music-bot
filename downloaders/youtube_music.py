@@ -497,10 +497,11 @@ class YouTubeMusicDownloader(BaseDownloader):
                 'album_artist': info.get('album_artist', artist),
                 'date': year,
                 'genre': info.get('genre', ''),
+                'total_tracks': total_tracks,  # 添加总曲目数
             }
             
             if track_number:
-                metadata['track_number'] = f"{track_number}/{total_tracks}" if total_tracks else str(track_number)
+                metadata['track_number'] = str(track_number)
             
             # 使用元数据管理器写入
             if self.metadata_manager:
@@ -575,7 +576,10 @@ class YouTubeMusicDownloader(BaseDownloader):
             if metadata.get('date'):
                 tags['TDRC'] = TDRC(encoding=3, text=str(metadata['date']))
             if metadata.get('track_number'):
-                tags['TRCK'] = TRCK(encoding=3, text=str(metadata['track_number']))
+                track_str = str(metadata['track_number'])
+                if metadata.get('total_tracks'):
+                    track_str = f"{track_str}/{metadata['total_tracks']}"
+                tags['TRCK'] = TRCK(encoding=3, text=track_str)
             if metadata.get('genre'):
                 tags['TCON'] = TCON(encoding=3, text=metadata['genre'])
             
@@ -615,6 +619,9 @@ class YouTubeMusicDownloader(BaseDownloader):
                 audio['DATE'] = str(metadata['date'])
             if metadata.get('track_number'):
                 audio['TRACKNUMBER'] = str(metadata['track_number'])
+            if metadata.get('total_tracks'):
+                audio['TOTALTRACKS'] = str(metadata['total_tracks'])
+                audio['TRACKTOTAL'] = str(metadata['total_tracks'])
             if metadata.get('genre'):
                 audio['GENRE'] = metadata['genre']
             
@@ -661,7 +668,9 @@ class YouTubeMusicDownloader(BaseDownloader):
                     track, total = track_str.split('/')
                     audio['trkn'] = [(int(track), int(total))]
                 else:
-                    audio['trkn'] = [(int(track_str), 0)]
+                    # 尝试获取 total_tracks
+                    total = int(metadata.get('total_tracks', 0)) if metadata.get('total_tracks') else 0
+                    audio['trkn'] = [(int(track_str), total)]
             
             if cover_data:
                 audio['covr'] = [MP4Cover(cover_data, imageformat=MP4Cover.FORMAT_JPEG)]

@@ -26,8 +26,8 @@ app = Flask(__name__,
            template_folder='templates',
            static_folder='static')
 
-# 设置 session 密钥
-app.secret_key = secrets.token_hex(32)
+# 设置 session 密钥（从环境变量读取或使用固定值，避免每次重启生成新密钥导致 session 失效）
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'music-bot-default-secret-key-change-in-production')
 
 # 配置管理器实例
 config_manager: ConfigManager = None

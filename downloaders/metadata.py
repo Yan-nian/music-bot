@@ -192,8 +192,12 @@ class MusicMetadataManager:
                 logger.debug(f"  添加录音时间(TDRC): {metadata['releasetime']}")
             
             if metadata.get('track_number'):
-                tags['TRCK'] = TRCK(encoding=3, text=str(metadata['track_number']))
-                logger.debug(f"  添加曲目编号: {metadata['track_number']}")
+                track_str = str(metadata['track_number'])
+                total_tracks = metadata.get('total_tracks', '')
+                if total_tracks:
+                    track_str = f"{track_str}/{total_tracks}"
+                tags['TRCK'] = TRCK(encoding=3, text=track_str)
+                logger.debug(f"  添加曲目编号: {track_str}")
             
             if metadata.get('genre'):
                 tags['TCON'] = TCON(encoding=3, text=metadata['genre'])
@@ -272,6 +276,11 @@ class MusicMetadataManager:
                 audio_file['TRACKNUMBER'] = str(metadata['track_number'])
                 logger.debug(f"  添加曲目编号: {metadata['track_number']}")
             
+            if metadata.get('total_tracks'):
+                audio_file['TOTALTRACKS'] = str(metadata['total_tracks'])
+                audio_file['TRACKTOTAL'] = str(metadata['total_tracks'])
+                logger.debug(f"  添加总曲目数: {metadata['total_tracks']}")
+            
             if metadata.get('genre'):
                 audio_file['GENRE'] = metadata['genre']
                 logger.debug(f"  添加流派: {metadata['genre']}")
@@ -344,8 +353,9 @@ class MusicMetadataManager:
             if metadata.get('track_number'):
                 try:
                     track_num = int(metadata['track_number'])
-                    audio_file['trkn'] = [(track_num, 0)]
-                    logger.debug(f"  添加曲目编号: {track_num}")
+                    total_tracks = int(metadata.get('total_tracks', 0)) if metadata.get('total_tracks') else 0
+                    audio_file['trkn'] = [(track_num, total_tracks)]
+                    logger.debug(f"  添加曲目编号: {track_num}/{total_tracks}")
                 except (ValueError, TypeError):
                     pass
             

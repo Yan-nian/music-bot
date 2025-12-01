@@ -15,6 +15,15 @@ from .base import BaseDownloader
 
 logger = logging.getLogger(__name__)
 
+# 检查元数据管理器是否可用
+try:
+    from .metadata import MusicMetadataManager
+    METADATA_AVAILABLE = True
+    logger.info("✅ 元数据管理器已加载")
+except ImportError:
+    METADATA_AVAILABLE = False
+    logger.warning("⚠️ 元数据管理器不可用")
+
 # 检查 yt-dlp 是否可用
 try:
     import yt_dlp
@@ -55,6 +64,13 @@ class YouTubeMusicDownloader(BaseDownloader):
         
         # 查找 cookies 文件
         self.cookies_path = self._find_cookies()
+        
+        # 初始化元数据管理器
+        if METADATA_AVAILABLE:
+            self.metadata_manager = MusicMetadataManager()
+            logger.info("✅ 元数据管理器已初始化")
+        else:
+            self.metadata_manager = None
         
         logger.info("✅ YouTube Music 下载器初始化完成")
     
@@ -214,12 +230,19 @@ class YouTubeMusicDownloader(BaseDownloader):
                     if d['status'] == 'downloading':
                         downloaded = d.get('downloaded_bytes', 0)
                         total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
+                        speed = d.get('speed', 0)
+                        eta = d.get('eta', 0)
+                        filename = d.get('filename', '')
+                        
                         if total > 0:
                             progress_callback({
-                                'status': 'progress',
+                                'status': 'file_progress',
                                 'percent': (downloaded / total) * 100,
                                 'downloaded': downloaded,
                                 'total': total,
+                                'speed': speed or 0,
+                                'eta': eta or 0,
+                                'filename': os.path.basename(filename) if filename else song_info.get('name', '未知') if song_info else '未知',
                             })
                     elif d['status'] == 'finished':
                         progress_callback({
@@ -252,6 +275,9 @@ class YouTubeMusicDownloader(BaseDownloader):
                         # 获取码率信息
                         abr = info.get('abr', 0)
                         bitrate_str = f"{int(abr)}kbps" if abr else '320kbps'
+                        
+                        # 写入元数据
+                        self._add_metadata_to_file(str(actual_file), info)
                         
                         return {
                             'success': True,
@@ -364,3 +390,229 @@ class YouTubeMusicDownloader(BaseDownloader):
         except Exception as e:
             logger.error(f"❌ 下载播放列表失败: {e}")
             return {'success': False, 'error': str(e)}
+    
+    def _add_metadata_to_file(self, file_path: str, info: Dict[str, Any]) -> bool:
+        """
+        为下载的音频文件添加元数据标签
+        
+        Args:
+            file_path: 音频文件路径
+            info: yt-dlp 返回的视频/音频信息
+            
+        Returns:
+            是否成功写入元数据
+        """
+        try:
+            # 提取元数据信息
+            title = info.get('title', '')
+            artist = info.get('artist', info.get('uploader', ''))
+            album = info.get('album', '')
+            
+            # 尝试从 release_year 或 upload_date 获取年份
+            year = info.get('release_year', '')
+            if not year and info.get('upload_date'):
+                upload_date = str(info.get('upload_date', ''))
+                if len(upload_date) >= 4:
+                    year = upload_date[:4]
+            
+            # 获取封面
+            cover_url = info.get('thumbnail', '')
+            cover_data = None
+            
+            if cover_url:
+                try:
+                    import requests
+                    response = requests.get(cover_url, timeout=30)
+                    if response.status_code == 200:
+                        cover_data = response.content
+                except Exception as e:
+                    logger.warning(f"⚠️ 获取封面失败: {e}")
+            
+            # 获取曲目号（如果在播放列表中）
+            track_number = info.get('playlist_index', '')
+            total_tracks = info.get('playlist_count', '')
+            
+            # 准备元数据字典
+            metadata = {
+                'title': title,
+                'artist': artist,
+                'album': album if album else info.get('playlist_title', ''),
+                'album_artist': info.get('album_artist', artist),
+                'date': year,
+                'genre': info.get('genre', ''),
+            }
+            
+            if track_number:
+                metadata['track_number'] = f"{track_number}/{total_tracks}" if total_tracks else str(track_number)
+            
+            # 使用元数据管理器写入
+            if self.metadata_manager:
+                success = self.metadata_manager.add_metadata_to_file(
+                    file_path=file_path,
+                    title=metadata.get('title'),
+                    artist=metadata.get('artist'),
+                    album=metadata.get('album'),
+                    album_artist=metadata.get('album_artist'),
+                    track_number=metadata.get('track_number'),
+                    date=metadata.get('date'),
+                    genre=metadata.get('genre'),
+                    cover_data=cover_data,
+                    mime_type='image/jpeg' if cover_data else None
+                )
+                
+                if success:
+                    logger.info(f"✅ 元数据写入成功: {title}")
+                    return True
+                else:
+                    logger.warning(f"⚠️ 元数据管理器写入失败，尝试备用方法")
+            
+            # 备用方法：直接使用 mutagen
+            return self._embed_metadata_fallback(file_path, metadata, cover_data)
+            
+        except Exception as e:
+            logger.error(f"❌ 写入元数据失败: {e}")
+            return False
+    
+    def _embed_metadata_fallback(self, file_path: str, metadata: Dict[str, Any], cover_data: bytes = None) -> bool:
+        """
+        备用元数据写入方法，直接使用 mutagen
+        """
+        try:
+            file_ext = Path(file_path).suffix.lower()
+            
+            if file_ext == '.mp3':
+                return self._embed_mp3_metadata(file_path, metadata, cover_data)
+            elif file_ext == '.flac':
+                return self._embed_flac_metadata(file_path, metadata, cover_data)
+            elif file_ext in ['.m4a', '.aac', '.mp4']:
+                return self._embed_m4a_metadata(file_path, metadata, cover_data)
+            else:
+                logger.warning(f"⚠️ 不支持的音频格式: {file_ext}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ 备用元数据写入失败: {e}")
+            return False
+    
+    def _embed_mp3_metadata(self, file_path: str, metadata: Dict[str, Any], cover_data: bytes = None) -> bool:
+        """写入 MP3 元数据"""
+        try:
+            from mutagen.mp3 import MP3
+            from mutagen.id3 import ID3, TIT2, TPE1, TALB, TPE2, TDRC, TRCK, TCON, APIC
+            
+            audio = MP3(file_path)
+            
+            if audio.tags is None:
+                audio.add_tags()
+            
+            tags = audio.tags
+            
+            if metadata.get('title'):
+                tags['TIT2'] = TIT2(encoding=3, text=metadata['title'])
+            if metadata.get('artist'):
+                tags['TPE1'] = TPE1(encoding=3, text=metadata['artist'])
+            if metadata.get('album'):
+                tags['TALB'] = TALB(encoding=3, text=metadata['album'])
+            if metadata.get('album_artist'):
+                tags['TPE2'] = TPE2(encoding=3, text=metadata['album_artist'])
+            if metadata.get('date'):
+                tags['TDRC'] = TDRC(encoding=3, text=str(metadata['date']))
+            if metadata.get('track_number'):
+                tags['TRCK'] = TRCK(encoding=3, text=str(metadata['track_number']))
+            if metadata.get('genre'):
+                tags['TCON'] = TCON(encoding=3, text=metadata['genre'])
+            
+            if cover_data:
+                tags['APIC'] = APIC(
+                    encoding=3,
+                    mime='image/jpeg',
+                    type=3,  # Front cover
+                    desc='Cover',
+                    data=cover_data
+                )
+            
+            audio.save()
+            logger.info(f"✅ MP3 元数据写入成功")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ MP3 元数据写入失败: {e}")
+            return False
+    
+    def _embed_flac_metadata(self, file_path: str, metadata: Dict[str, Any], cover_data: bytes = None) -> bool:
+        """写入 FLAC 元数据"""
+        try:
+            from mutagen.flac import FLAC, Picture
+            
+            audio = FLAC(file_path)
+            
+            if metadata.get('title'):
+                audio['TITLE'] = metadata['title']
+            if metadata.get('artist'):
+                audio['ARTIST'] = metadata['artist']
+            if metadata.get('album'):
+                audio['ALBUM'] = metadata['album']
+            if metadata.get('album_artist'):
+                audio['ALBUMARTIST'] = metadata['album_artist']
+            if metadata.get('date'):
+                audio['DATE'] = str(metadata['date'])
+            if metadata.get('track_number'):
+                audio['TRACKNUMBER'] = str(metadata['track_number'])
+            if metadata.get('genre'):
+                audio['GENRE'] = metadata['genre']
+            
+            if cover_data:
+                picture = Picture()
+                picture.type = 3  # Front cover
+                picture.mime = 'image/jpeg'
+                picture.desc = 'Cover'
+                picture.data = cover_data
+                audio.add_picture(picture)
+            
+            audio.save()
+            logger.info(f"✅ FLAC 元数据写入成功")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ FLAC 元数据写入失败: {e}")
+            return False
+    
+    def _embed_m4a_metadata(self, file_path: str, metadata: Dict[str, Any], cover_data: bytes = None) -> bool:
+        """写入 M4A/AAC 元数据"""
+        try:
+            from mutagen.mp4 import MP4, MP4Cover
+            
+            audio = MP4(file_path)
+            
+            if metadata.get('title'):
+                audio['\xa9nam'] = metadata['title']
+            if metadata.get('artist'):
+                audio['\xa9ART'] = metadata['artist']
+            if metadata.get('album'):
+                audio['\xa9alb'] = metadata['album']
+            if metadata.get('album_artist'):
+                audio['aART'] = metadata['album_artist']
+            if metadata.get('date'):
+                audio['\xa9day'] = str(metadata['date'])
+            if metadata.get('genre'):
+                audio['\xa9gen'] = metadata['genre']
+            
+            # 处理曲目号
+            if metadata.get('track_number'):
+                track_str = str(metadata['track_number'])
+                if '/' in track_str:
+                    track, total = track_str.split('/')
+                    audio['trkn'] = [(int(track), int(total))]
+                else:
+                    audio['trkn'] = [(int(track_str), 0)]
+            
+            if cover_data:
+                audio['covr'] = [MP4Cover(cover_data, imageformat=MP4Cover.FORMAT_JPEG)]
+            
+            audio.save()
+            logger.info(f"✅ M4A 元数据写入成功")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ M4A 元数据写入失败: {e}")
+            return False

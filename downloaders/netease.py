@@ -15,8 +15,17 @@ from pathlib import Path
 from typing import Optional, Dict, List, Any, Callable
 
 from .base import BaseDownloader
+from .metadata import MusicMetadataManager
 
 logger = logging.getLogger(__name__)
+
+# 检查元数据模块是否可用
+try:
+    METADATA_AVAILABLE = True
+    logger.info("✅ 成功导入音乐元数据模块")
+except ImportError as e:
+    METADATA_AVAILABLE = False
+    logger.warning(f"⚠️ 音乐元数据模块不可用: {e}")
 
 
 class NeteaseDownloader(BaseDownloader):
@@ -77,6 +86,19 @@ class NeteaseDownloader(BaseDownloader):
         
         # 加载 cookies
         self._load_cookies()
+        
+        # 初始化音乐元数据管理器
+        if METADATA_AVAILABLE:
+            try:
+                self.metadata_manager = MusicMetadataManager()
+                logger.info("✅ 音乐元数据管理器初始化成功")
+                logger.info(f"🔧 可用的音频标签库: {', '.join(self.metadata_manager.available_libraries) if self.metadata_manager.available_libraries else '无'}")
+            except Exception as e:
+                logger.error(f"❌ 音乐元数据管理器初始化失败: {e}")
+                self.metadata_manager = None
+        else:
+            self.metadata_manager = None
+            logger.warning("⚠️ 音乐元数据管理器不可用")
         
         logger.info("✅ 网易云音乐下载器初始化完成 (官方 API)")
     
@@ -532,8 +554,9 @@ class NeteaseDownloader(BaseDownloader):
                     'artist': song_info['artist'],
                 })
             
-            # 下载文件
-            success = self._download_file(song_url_info['url'], filepath, progress_callback)
+            # 下载文件 - 传递文件名用于显示
+            display_name = f"{song_info['name']} - {song_info['artist']}"
+            success = self._download_file(song_url_info['url'], filepath, progress_callback, display_name)
             
             if success:
                 file_size = os.path.getsize(filepath) if os.path.exists(filepath) else 0
@@ -546,6 +569,13 @@ class NeteaseDownloader(BaseDownloader):
                         with open(lrc_path, 'w', encoding='utf-8') as f:
                             f.write(lyrics)
                         logger.info(f"✅ 歌词已保存: {lrc_path}")
+                
+                # 为音乐文件添加元数据标签（用于Plex刮削）
+                self._add_metadata_to_file(
+                    filepath,
+                    song_info,
+                    cover_url=song_info.get('cover')
+                )
                 
                 # 下载封面
                 if self.download_cover and song_info.get('cover'):
@@ -739,4 +769,321 @@ class NeteaseDownloader(BaseDownloader):
             
         except Exception as e:
             logger.error(f"❌ 下载文件失败: {e}")
+            return False
+
+    def _add_metadata_to_file(
+        self,
+        file_path: str,
+        song_info: Dict,
+        album_info: Optional[Dict] = None,
+        cover_url: Optional[str] = None
+    ) -> bool:
+        """
+        为下载的音乐文件添加元数据标签（用于Plex等媒体库刮削）
+        
+        Args:
+            file_path: 音乐文件路径
+            song_info: 歌曲信息字典
+            album_info: 专辑信息字典（可选）
+            cover_url: 封面图片URL（可选）
+            
+        Returns:
+            bool: 是否成功添加元数据
+        """
+        logger.info(f"🏷️ 开始为音乐文件添加元数据: {Path(file_path).name}")
+        
+        if not self.metadata_manager:
+            logger.warning("⚠️ 元数据管理器不可用，尝试使用内置回退方式写入元数据")
+        
+        try:
+            # 安全提取发布时间
+            def _extract_year(publish_time_value) -> str:
+                """提取年份"""
+                if not publish_time_value:
+                    return ''
+                try:
+                    if isinstance(publish_time_value, int):
+                        from datetime import datetime
+                        dt = datetime.fromtimestamp(publish_time_value / 1000)
+                        return str(dt.year)
+                    s = str(publish_time_value)
+                    return s[:4] if len(s) >= 4 else s
+                except Exception:
+                    return ''
+            
+            def _extract_release_date(publish_time_value) -> str:
+                """提取完整发布日期"""
+                if not publish_time_value:
+                    return ''
+                try:
+                    if isinstance(publish_time_value, int):
+                        from datetime import datetime
+                        dt = datetime.fromtimestamp(publish_time_value / 1000)
+                        return dt.strftime('%Y-%m-%d')
+                    s = str(publish_time_value)
+                    if len(s) >= 8:
+                        return s
+                    return ''
+                except Exception:
+                    return ''
+            
+            # 智能处理发布时间
+            song_release_date = _extract_release_date(song_info.get('publish_time'))
+            song_publish_year = _extract_year(song_info.get('publish_time'))
+            
+            # 智能处理专辑艺术家
+            song_album_artist = song_info.get('album_artist', '')
+            if not song_album_artist:
+                artist_str = song_info.get('artist', '')
+                # 从多艺术家字符串中提取第一个
+                for sep in [', ', '、', '/', ' feat. ', ' ft. ', ' & ']:
+                    if sep in artist_str:
+                        song_album_artist = artist_str.split(sep)[0].strip()
+                        break
+                else:
+                    song_album_artist = artist_str
+            
+            # 准备元数据
+            metadata = {
+                'title': song_info.get('name', ''),
+                'artist': song_info.get('artist', ''),
+                'album': song_info.get('album', ''),
+                'album_artist': song_album_artist,
+                'track_number': str(song_info.get('track_number', '')),
+                'disc_number': '1',
+                'genre': '流行'
+            }
+            
+            # 智能处理时间字段
+            if song_release_date and len(song_release_date) > 4:
+                metadata['date'] = song_publish_year
+                metadata['releasetime'] = song_release_date
+                logger.debug(f"🗓️ 同时写入年份: {song_publish_year} 和完整发布时间: {song_release_date}")
+            elif song_publish_year:
+                metadata['date'] = song_publish_year
+                logger.debug(f"📅 只写入发布年份: {song_publish_year}")
+            
+            # 如果有专辑信息，优先使用专辑信息
+            if album_info:
+                metadata['album'] = album_info.get('name', metadata['album'])
+                metadata['album_artist'] = album_info.get('artist', metadata['album_artist'])
+                album_release_date = _extract_release_date(album_info.get('publish_time'))
+                album_publish_year = _extract_year(album_info.get('publish_time'))
+                
+                if album_release_date and len(album_release_date) > 4:
+                    metadata['date'] = album_publish_year or metadata.get('date', '')
+                    metadata['releasetime'] = album_release_date
+                elif album_publish_year:
+                    metadata['date'] = album_publish_year
+                    metadata.pop('releasetime', None)
+            
+            # 获取封面URL
+            final_cover_url = cover_url or song_info.get('cover') or song_info.get('pic_url')
+            if album_info:
+                final_cover_url = final_cover_url or album_info.get('pic_url')
+            
+            logger.info(f"🏷️ 元数据详情:")
+            logger.debug(f"  标题: {metadata['title']}")
+            logger.debug(f"  艺术家: {metadata['artist']}")
+            logger.debug(f"  专辑: {metadata['album']}")
+            logger.debug(f"  专辑艺术家: {metadata['album_artist']}")
+            logger.debug(f"  曲目: {metadata['track_number']}")
+            logger.debug(f"  年份: {metadata.get('date', '')}")
+            
+            # 使用元数据管理器写入
+            if self.metadata_manager:
+                success = self.metadata_manager.add_metadata_to_file(
+                    file_path=file_path,
+                    metadata=metadata,
+                    cover_url=final_cover_url
+                )
+            else:
+                # 使用回退方案写入元数据
+                success = self._embed_metadata_fallback(file_path, metadata, final_cover_url)
+            
+            if success:
+                logger.info(f"✅ 成功添加元数据: {Path(file_path).name}")
+            else:
+                logger.warning(f"⚠️ 添加元数据失败: {Path(file_path).name}")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"❌ 添加元数据时出错: {e}")
+            return False
+
+    def _embed_metadata_fallback(
+        self,
+        file_path: str,
+        metadata: Dict,
+        cover_url: Optional[str]
+    ) -> bool:
+        """
+        当外部元数据管理器不可用时，使用mutagen直接写入元数据
+        仅依赖 mutagen，可选使用 requests 下载封面
+        """
+        try:
+            from mutagen import File
+            from mutagen.id3 import (
+                ID3, ID3NoHeaderError, TIT2, TPE1, TALB, TPE2, 
+                TRCK, TCON, APIC, TDRC, TYER, TPOS
+            )
+            from mutagen.flac import FLAC, Picture
+        except ImportError as e:
+            logger.warning(f"⚠️ 回退元数据写入不可用（缺少mutagen）: {e}")
+            return False
+        
+        try:
+            path_obj = Path(file_path)
+            suffix = path_obj.suffix.lower()
+            
+            title = metadata.get('title', '')
+            artist = metadata.get('artist', '')
+            album = metadata.get('album', '')
+            album_artist = metadata.get('album_artist', artist)
+            track_number = str(metadata.get('track_number', '') or '')
+            disc_number = str(metadata.get('disc_number', '1') or '1')
+            genre = metadata.get('genre', '流行')
+            
+            # 下载封面
+            cover_data: Optional[bytes] = None
+            cover_mime = 'image/jpeg'
+            if cover_url:
+                try:
+                    resp = self.session.get(cover_url, timeout=15)
+                    resp.raise_for_status()
+                    cover_data = resp.content
+                    ctype = resp.headers.get('content-type', '').lower()
+                    if 'png' in ctype:
+                        cover_mime = 'image/png'
+                except Exception as ce:
+                    logger.warning(f"⚠️ 下载专辑封面失败，跳过封面: {ce}")
+            
+            if suffix == '.mp3':
+                try:
+                    try:
+                        tags = ID3(file_path)
+                    except ID3NoHeaderError:
+                        tags = ID3()
+                    
+                    tags.add(TIT2(encoding=3, text=title))
+                    tags.add(TPE1(encoding=3, text=artist))
+                    tags.add(TALB(encoding=3, text=album))
+                    tags.add(TPE2(encoding=3, text=album_artist))
+                    if track_number:
+                        tags.add(TRCK(encoding=3, text=track_number))
+                    tags.add(TCON(encoding=3, text=genre))
+                    
+                    # 处理时间字段
+                    if metadata.get('date'):
+                        try:
+                            tags.add(TYER(encoding=3, text=metadata['date']))
+                        except:
+                            tags.add(TDRC(encoding=3, text=metadata['date']))
+                    
+                    if metadata.get('releasetime'):
+                        tags.add(TDRC(encoding=3, text=metadata['releasetime']))
+                    
+                    # 碟片编号
+                    try:
+                        tpos_value = f"{disc_number}/1" if disc_number else "1/1"
+                        tags.add(TPOS(encoding=3, text=tpos_value))
+                    except Exception:
+                        pass
+                    
+                    if cover_data:
+                        tags.add(APIC(encoding=3, mime=cover_mime, type=3, desc='Cover', data=cover_data))
+                    
+                    tags.save(file_path)
+                    logger.info(f"✅ 回退方式为MP3写入元数据成功: {path_obj.name}")
+                    return True
+                except Exception as e:
+                    logger.error(f"❌ 回退方式写入MP3元数据失败: {e}")
+                    return False
+            
+            elif suffix == '.flac':
+                try:
+                    audio = FLAC(file_path)
+                    audio['TITLE'] = title
+                    audio['ARTIST'] = artist
+                    audio['ALBUM'] = album
+                    audio['ALBUMARTIST'] = album_artist
+                    if track_number:
+                        audio['TRACKNUMBER'] = track_number
+                    
+                    if metadata.get('date'):
+                        audio['DATE'] = metadata['date']
+                    
+                    if metadata.get('releasetime'):
+                        audio['RELEASETIME'] = metadata['releasetime']
+                        audio['RELEASEDATE'] = metadata['releasetime']
+                    
+                    # 碟片编号
+                    audio['DISCNUMBER'] = disc_number
+                    audio['DISCTOTAL'] = '1'
+                    audio['TOTALDISCS'] = '1'
+                    audio['DISC'] = disc_number
+                    audio['PART'] = disc_number
+                    audio['PARTOFSET'] = f'{disc_number}/1'
+                    audio['PART_OF_SET'] = f'{disc_number}/1'
+                    audio['GENRE'] = genre
+                    
+                    if cover_data:
+                        pic = Picture()
+                        pic.data = cover_data
+                        pic.type = 3
+                        pic.mime = cover_mime
+                        pic.desc = 'Cover'
+                        audio.clear_pictures()
+                        audio.add_picture(pic)
+                    
+                    audio.save()
+                    logger.info(f"✅ 回退方式为FLAC写入元数据成功: {path_obj.name}")
+                    return True
+                except Exception as e:
+                    logger.error(f"❌ 回退方式写入FLAC元数据失败: {e}")
+                    return False
+            
+            elif suffix in ['.m4a', '.mp4', '.aac']:
+                try:
+                    from mutagen.mp4 import MP4, MP4Cover
+                    
+                    audio = MP4(file_path)
+                    audio['\xa9nam'] = title
+                    audio['\xa9ART'] = artist
+                    audio['\xa9alb'] = album
+                    audio['aART'] = album_artist
+                    
+                    if metadata.get('date'):
+                        audio['\xa9day'] = metadata['date']
+                    
+                    if track_number:
+                        try:
+                            audio['trkn'] = [(int(track_number), 0)]
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    audio['\xa9gen'] = genre
+                    
+                    try:
+                        audio['disk'] = [(int(disc_number), 1)]
+                    except (ValueError, TypeError):
+                        pass
+                    
+                    if cover_data:
+                        audio['covr'] = [MP4Cover(cover_data, imageformat=MP4Cover.FORMAT_JPEG)]
+                    
+                    audio.save()
+                    logger.info(f"✅ 回退方式为M4A写入元数据成功: {path_obj.name}")
+                    return True
+                except Exception as e:
+                    logger.error(f"❌ 回退方式写入M4A元数据失败: {e}")
+                    return False
+            
+            else:
+                logger.warning(f"⚠️ 暂不支持的音频格式，无法写入元数据: {suffix}")
+                return False
+        
+        except Exception as e:
+            logger.error(f"❌ 回退方式写入元数据异常: {e}")
             return False

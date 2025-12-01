@@ -284,7 +284,7 @@ class MusicBot:
             async def update_progress_message(progress_text: str):
                 """更新进度消息，限制更新频率"""
                 current_time = time.time()
-                if current_time - last_update_time[0] >= 2:  # 至少间隔2秒更新一次
+                if current_time - last_update_time[0] >= 1:  # 至少间隔1秒更新一次
                     try:
                         await progress_msg.edit_text(progress_text)
                         last_update_time[0] = current_time
@@ -295,7 +295,52 @@ class MusicBot:
                 """同步进度回调（将被转换为异步调用）"""
                 status = progress_info.get('status', '')
                 
-                if status in ['album_progress', 'playlist_progress']:
+                # 处理单文件下载进度（实时更新）
+                if status == 'file_progress':
+                    percent = progress_info.get('percent', 0)
+                    downloaded = progress_info.get('downloaded', 0)
+                    total = progress_info.get('total', 0)
+                    speed = progress_info.get('speed', 0)
+                    eta = progress_info.get('eta', 0)
+                    filename = progress_info.get('filename', '未知文件')
+                    
+                    # 创建进度条
+                    bar_length = 20
+                    filled_length = int(bar_length * percent / 100)
+                    progress_bar = '█' * filled_length + '░' * (bar_length - filled_length)
+                    
+                    # 格式化大小和速度
+                    downloaded_mb = downloaded / (1024 * 1024)
+                    total_mb = total / (1024 * 1024)
+                    speed_mb = speed / (1024 * 1024) if speed > 0 else 0
+                    
+                    # 格式化预计剩余时间
+                    if eta > 0:
+                        if eta >= 60:
+                            eta_str = f"{int(eta // 60)}分{int(eta % 60)}秒"
+                        else:
+                            eta_str = f"{int(eta)}秒"
+                    else:
+                        eta_str = "计算中..."
+                    
+                    # 构建进度消息 - 原项目格式
+                    progress_text = (
+                        f"🎵 音乐：{filename}\n"
+                        f"💾 大小：{downloaded_mb:.2f}MB / {total_mb:.2f}MB\n"
+                        f"⚡ 速度：{speed_mb:.2f}MB/s\n"
+                        f"⏳ 预计剩余：{eta_str}\n"
+                        f"📊 进度：{progress_bar} ({percent:.1f}%)"
+                    )
+                    
+                    # 使用 asyncio 调度更新
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            asyncio.create_task(update_progress_message(progress_text))
+                    except Exception:
+                        pass
+                
+                elif status in ['album_progress', 'playlist_progress']:
                     current = progress_info.get('current', 0)
                     total = progress_info.get('total', 0)
                     song_name = progress_info.get('song', '')
@@ -310,12 +355,14 @@ class MusicBot:
                         percentage = 0
                     progress_bar = '█' * filled_length + '░' * (bar_length - filled_length)
                     
-                    # 构建进度消息 - 参考原项目格式
+                    # 构建进度消息 - 参考原项目格式（进度条风格）
                     progress_text = (
-                        f"📥 下载中\n\n"
-                        f"📝 当前: {song_name}\n"
-                        f"📊 进度: {current}/{total} 首\n\n"
-                        f"{progress_bar} {percentage:.1f}%"
+                        f"🎵 音乐：{song_name}\n"
+                        f"💾 大小：下载中...\n"
+                        f"⚡ 速度：下载中...\n"
+                        f"⏳ 预计剩余：计算中...\n"
+                        f"📊 进度：{progress_bar} ({percentage:.1f}%)\n\n"
+                        f"📝 当前：{current}/{total} 首"
                     )
                     
                     # 使用 asyncio 调度更新
@@ -354,16 +401,22 @@ class MusicBot:
                     # 平台图标
                     platform_icon = {'netease': '🎵', 'apple_music': '🍎', 'youtube_music': '▶️'}.get(downloader_name, '🎵')
                     
+                    # 获取文件名用于显示
                     filepath = result.get('filepath', '')
-                    # 参考原项目格式 - 单曲下载完成
+                    import os
+                    display_filename = os.path.basename(filepath) if filepath else f"{result.get('song_title', '未知')} - {result.get('song_artist', '未知')}"
+                    size_mb = result.get('size_mb', 0)
+                    
+                    # 创建进度条 (20个字符，100%完成)
+                    progress_bar = '█' * 20
+                    
+                    # 参考原项目格式 - 单曲下载完成（进度条风格）
                     success_msg = (
-                        f"{platform_icon} 音乐下载完成\n\n"
-                        f"🎵 音乐: {result.get('song_title', '未知')} - {result.get('song_artist', '未知')}\n"
-                        f"💾 大小: {result.get('size_mb', 0):.2f}MB\n"
-                        f"🖼️ 码率: {result.get('bitrate', '未知')}\n"
-                        f"🎚️ 音质: {result.get('quality', '未知')}\n"
-                        f"⏱️ 时长: {result.get('duration', '未知')}\n"
-                        f"📂 保存位置: {filepath}"
+                        f"{platform_icon} 音乐：{display_filename}\n"
+                        f"💾 大小：{size_mb:.2f}MB\n"
+                        f"⚡ 速度：完成\n"
+                        f"⏳ 预计剩余：0秒\n"
+                        f"📊 进度：{progress_bar} (100.0%)"
                     )
                     await progress_msg.edit_text(success_msg)
                 elif content_type in ['album', 'playlist']:
@@ -408,39 +461,30 @@ class MusicBot:
                     if len(success_songs) > 15:
                         song_lines.append(f"... 还有 {len(success_songs) - 15} 首歌曲")
                     
-                    # 构建完整消息 - 参考原项目格式
-                    summary = f"{platform_icon} {type_label}下载完成\n\n"
+                    # 创建进度条 (20个字符，100%完成)
+                    progress_bar = '█' * 20
                     
-                    if content_type == 'album':
-                        summary += f"📀 专辑名称: {title}\n"
-                        if artist_name != '未知艺术家':
-                            summary += f"👤 艺术家: {artist_name}\n"
-                    else:
-                        summary += f"📋 歌单名称: {title}\n"
+                    # 构建完整消息 - 参考原项目格式（进度条风格）
+                    summary = f"{platform_icon} {type_label}：{title}\n"
+                    summary += f"💾 大小：{total_size_mb:.1f}MB\n"
+                    summary += f"⚡ 速度：完成\n"
+                    summary += f"⏳ 预计剩余：0秒\n"
+                    summary += f"📊 进度：{progress_bar} (100.0%)\n\n"
                     
-                    summary += (
-                        f"🎵 歌曲数量: {result.get('total_songs', len(success_songs))} 首\n"
-                        f"✅ 成功下载: {len(success_songs)} 首\n"
-                    )
+                    # 添加统计信息
+                    summary += f"🎵 歌曲数量：{result.get('total_songs', len(success_songs))} 首\n"
+                    summary += f"✅ 成功下载：{len(success_songs)} 首\n"
                     
                     if failed_songs:
-                        summary += f"❌ 失败数量: {len(failed_songs)} 首\n"
-                    
-                    summary += (
-                        f"💾 总大小: {total_size_mb:.1f} MB\n"
-                        f"🎚️ 音质: {quality_name}\n"
-                        f"🎼 文件格式: {file_format}\n"
-                        f"📊 码率: {bitrate}\n"
-                        f"📂 保存位置: {download_dir}\n"
-                    )
+                        summary += f"❌ 失败数量：{len(failed_songs)} 首\n"
                     
                     # 添加歌曲列表
                     if song_lines:
-                        summary += "\n🎵 歌曲列表:\n\n" + "\n".join(song_lines)
+                        summary += "\n🎵 歌曲列表：\n" + "\n".join(song_lines)
                     
                     # 如果有失败的歌曲，列出失败原因
                     if failed_songs and len(failed_songs) <= 5:
-                        summary += "\n\n❌ 下载失败的歌曲:\n"
+                        summary += "\n\n❌ 下载失败的歌曲：\n"
                         for song in failed_songs[:5]:
                             song_name = song.get('song_title', '未知')
                             error = song.get('error', '未知错误')

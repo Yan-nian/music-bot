@@ -561,6 +561,17 @@ class AppleMusicDownloader(BaseDownloader):
                 "error": str(e),
             }
 
+    def _parse_size_to_bytes(self, size_str: str) -> float:
+        """将大小字符串转换为字节数"""
+        import re
+        match = re.match(r'(\d+\.?\d*)\s*([KMGT]?B)', size_str, re.IGNORECASE)
+        if not match:
+            return 0
+        value = float(match.group(1))
+        unit = match.group(2).upper()
+        multipliers = {'B': 1, 'KB': 1024, 'MB': 1024**2, 'GB': 1024**3, 'TB': 1024**4}
+        return value * multipliers.get(unit, 1)
+    
     def _parse_gamdl_progress(self, line: str) -> Optional[Dict]:
         """
         解析 gamdl 输出的进度信息
@@ -578,11 +589,26 @@ class AppleMusicDownloader(BaseDownloader):
             re.IGNORECASE,
         )
         if download_match:
+            percent = int(download_match.group(1))
+            downloaded_str = f"{download_match.group(2)}{download_match.group(3)}"
+            total_str = f"{download_match.group(4)}{download_match.group(5)}"
+            
+            # 转换为字节
+            downloaded_bytes = self._parse_size_to_bytes(downloaded_str)
+            total_bytes = self._parse_size_to_bytes(total_str)
+            
             return {
+                "status": "file_progress",
                 "phase": "downloading",
-                "percentage": int(download_match.group(1)),
-                "downloaded": f"{download_match.group(2)}{download_match.group(3)}",
-                "total": f"{download_match.group(4)}{download_match.group(5)}",
+                "percent": percent,
+                "percentage": percent,
+                "downloaded": downloaded_bytes,
+                "total": total_bytes,
+                "downloaded_str": downloaded_str,
+                "total_str": total_str,
+                "speed": 0,  # gamdl 不直接提供速度
+                "eta": 0,
+                "filename": "Apple Music",
             }
 
         # 处理中：Processing...
@@ -600,6 +626,7 @@ class AppleMusicDownloader(BaseDownloader):
                 "phase": "downloading",
                 "artist": song_match.group(1).strip(),
                 "title": song_match.group(2).strip(),
+                "filename": f"{song_match.group(1).strip()} - {song_match.group(2).strip()}",
             }
 
         return None

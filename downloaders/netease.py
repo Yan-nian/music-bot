@@ -570,21 +570,13 @@ class NeteaseDownloader(BaseDownloader):
                 file_size = os.path.getsize(filepath)
                 logger.info(f"📁 文件已存在: {filename}")
                 
-                # 即使文件已存在，也尝试更新元数据（可能之前下载时没有正确添加）
-                logger.info(f"📝 更新已存在文件的元数据...")
-                self._add_metadata_to_file(
-                    filepath,
-                    song_info,
-                    cover_url=song_info.get('cover')
-                )
-                
                 return {
                     'success': True,
                     'song_title': song_info['name'],
                     'song_artist': song_info['artist'],
                     'filepath': filepath,
                     'size_mb': file_size / (1024 * 1024),
-                    'message': '文件已存在（已更新元数据）',
+                    'message': '文件已存在',
                 }
             
             if progress_callback:
@@ -688,6 +680,7 @@ class NeteaseDownloader(BaseDownloader):
                     'current': i,
                     'total': len(songs),
                     'song': song['name'],
+                    'album': album_name,
                 })
             
             # 构建额外元数据（从专辑获取的完整信息）
@@ -699,7 +692,23 @@ class NeteaseDownloader(BaseDownloader):
                 'publish_time': song.get('publish_time'),
             }
             
-            result = self.download_song(song['id'], download_dir, quality, progress_callback, extra_metadata)
+            # 创建包装的进度回调，添加专辑进度信息
+            def make_album_progress_callback(song_index, total_songs, song_name, album):
+                def wrapped_callback(progress_info):
+                    if progress_callback:
+                        # 如果是文件下载进度，添加专辑上下文
+                        if progress_info.get('status') == 'file_progress':
+                            progress_info['album_context'] = {
+                                'current': song_index,
+                                'total': total_songs,
+                                'song': song_name,
+                                'album': album,
+                            }
+                        progress_callback(progress_info)
+                return wrapped_callback
+            
+            album_callback = make_album_progress_callback(i, len(songs), song['name'], album_name)
+            result = self.download_song(song['id'], download_dir, quality, album_callback, extra_metadata)
             results['songs'].append(result)
             
             if result.get('success'):
@@ -742,9 +751,26 @@ class NeteaseDownloader(BaseDownloader):
                     'current': i,
                     'total': len(songs),
                     'song': song['name'],
+                    'playlist': results['playlist_title'],
                 })
             
-            result = self.download_song(song['id'], download_dir, quality, progress_callback)
+            # 创建包装的进度回调，添加歌单进度信息
+            def make_playlist_progress_callback(song_index, total_songs, song_name, playlist_title):
+                def wrapped_callback(progress_info):
+                    if progress_callback:
+                        # 如果是文件下载进度，添加歌单上下文
+                        if progress_info.get('status') == 'file_progress':
+                            progress_info['playlist_context'] = {
+                                'current': song_index,
+                                'total': total_songs,
+                                'song': song_name,
+                                'playlist': playlist_title,
+                            }
+                        progress_callback(progress_info)
+                return wrapped_callback
+            
+            playlist_callback = make_playlist_progress_callback(i, len(songs), song['name'], results['playlist_title'])
+            result = self.download_song(song['id'], download_dir, quality, playlist_callback)
             results['songs'].append(result)
             
             if result.get('success'):

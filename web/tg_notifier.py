@@ -764,76 +764,9 @@ def get_notifier(update_interval: float = 1.0) -> TelegramNotifier:
 
 # ==================== 独立的 TG 消息发送功能 ====================
 
-class TelegramSender:
-    """独立的 Telegram 消息发送器（用于 Web API 调用）"""
-    
-    _instance = None
-    _bot = None
-    
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-    
-    @classmethod
-    def initialize(cls, bot_token: str, proxy_url: str = None):
-        """初始化 Bot（在有配置时调用）"""
-        try:
-            import httpx
-            from telegram import Bot
-            
-            if proxy_url:
-                # 创建带代理的 httpx client
-                client = httpx.AsyncClient(proxy=proxy_url)
-                cls._bot = Bot(token=bot_token, request=client)
-            else:
-                cls._bot = Bot(token=bot_token)
-            
-            logger.info("✅ Telegram 消息发送器初始化成功")
-            return True
-        except ImportError:
-            logger.warning("⚠️ telegram 模块未安装，TG 通知不可用")
-            return False
-        except Exception as e:
-            logger.error(f"❌ 初始化 Telegram 发送器失败: {e}")
-            return False
-    
-    @classmethod
-    async def send_message_async(cls, chat_id: int, text: str, parse_mode: str = None) -> bool:
-        """异步发送消息"""
-        if not cls._bot:
-            return False
-        
-        try:
-            await cls._bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                parse_mode=parse_mode
-            )
-            return True
-        except Exception as e:
-            logger.error(f"❌ 发送 TG 消息失败: {e}")
-            return False
-    
-    @classmethod
-    def send_message_sync(cls, chat_id: int, text: str, parse_mode: str = None) -> bool:
-        """同步发送消息（会阻塞）"""
-        try:
-            import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                return loop.run_until_complete(cls.send_message_async(chat_id, text, parse_mode))
-            finally:
-                loop.close()
-        except Exception as e:
-            logger.error(f"❌ 同步发送 TG 消息失败: {e}")
-            return False
-
-
 def send_telegram_notification(config_manager, message: str, parse_mode: str = None) -> bool:
     """
-    发送 Telegram 通知给所有配置的用户
+    发送 Telegram 通知给所有配置的用户（使用 HTTP API 直接发送）
     
     Args:
         config_manager: 配置管理器实例
@@ -843,26 +776,36 @@ def send_telegram_notification(config_manager, message: str, parse_mode: str = N
     Returns:
         是否至少成功发送给一个用户
     """
+    import requests
+    
     try:
         # 检查是否启用通知
         if not config_manager.get_config('telegram_notify_enabled', True):
+            logger.debug("TG 通知未启用")
             return False
         
         bot_token = config_manager.get_config('telegram_bot_token', '')
         if not bot_token:
+            logger.debug("未配置 Bot Token")
             return False
         
         allowed_users = config_manager.get_config('telegram_allowed_users', '')
         if not allowed_users:
+            logger.debug("未配置允许的用户")
             return False
         
         # 获取代理配置
-        proxy_url = None
+        proxies = None
         if config_manager.get_config('proxy_enabled', False):
-            proxy_url = config_manager.get_config('proxy_host', '')
+            proxy_host = config_manager.get_config('proxy_host', '')
+            if proxy_host:
+                proxies = {
+                    'http': proxy_host,
+                    'https': proxy_host
+                }
         
-        # 初始化发送器
-        TelegramSender.initialize(bot_token, proxy_url)
+        # Telegram API URL
+        api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
         
         # 发送给所有用户
         success_count = 0
@@ -870,15 +813,39 @@ def send_telegram_notification(config_manager, message: str, parse_mode: str = N
             user_id = user_id.strip()
             if user_id:
                 try:
-                    if TelegramSender.send_message_sync(int(user_id), message, parse_mode):
-                        success_count += 1
+                    payload = {
+                        'chat_id': int(user_id),
+                        'text': message,
+                    }
+                    if parse_mode:
+                        payload['parse_mode'] = parse_mode
+                    
+                    response = requests.post(api_url, json=payload, proxies=proxies, timeout=30)
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        if result.get('ok'):
+                            success_count += 1
+                            logger.debug(f"✅ 已发送 TG 通知给用户 {user_id}")
+                        else:
+                            logger.warning(f"⚠️ TG API 返回错误: {result.get('description', '未知错误')}")
+                    else:
+                        logger.warning(f"⚠️ TG API 请求失败: HTTP {response.status_code}")
+                        
                 except ValueError:
                     logger.warning(f"⚠️ 无效的用户 ID: {user_id}")
+                except Exception as e:
+                    logger.warning(f"⚠️ 发送给用户 {user_id} 失败: {e}")
+        
+        if success_count > 0:
+            logger.info(f"✅ TG 通知已发送给 {success_count} 个用户")
         
         return success_count > 0
         
     except Exception as e:
         logger.error(f"❌ 发送 TG 通知失败: {e}")
+        import traceback
+        logger.debug(traceback.format_exc())
         return False
 
 

@@ -613,12 +613,32 @@ class NeteaseDownloader(BaseDownloader):
                 playlist_name = playlist.get('name', '未知歌单')
                 tracks = playlist.get('tracks', [])
                 
-                if not tracks:
+                # 获取完整的歌曲ID列表（trackIds 包含所有歌曲，tracks 可能只有前20首）
+                track_ids = playlist.get('trackIds', [])
+                all_song_ids = [str(t['id']) for t in track_ids] if track_ids else [str(song['id']) for song in tracks]
+                
+                logger.info(f"📋 歌单 '{playlist_name}' 共 {len(all_song_ids)} 首歌曲 (tracks返回 {len(tracks)} 首)")
+                
+                if not all_song_ids:
                     logger.warning(f"⚠️ 歌单 {playlist_name} 没有歌曲")
                     return [], playlist_name
                 
-                # 收集所有歌曲ID和专辑ID
-                song_ids = [str(song['id']) for song in tracks]
+                # 如果 tracks 数量少于 trackIds，说明需要额外获取歌曲详情
+                if len(tracks) < len(all_song_ids):
+                    logger.info(f"📝 歌单歌曲不完整，正在获取全部 {len(all_song_ids)} 首歌曲详情...")
+                    # 分批获取歌曲详情（每批最多 500 首）
+                    all_tracks = []
+                    batch_size = 500
+                    for i in range(0, len(all_song_ids), batch_size):
+                        batch_ids = all_song_ids[i:i + batch_size]
+                        batch_tracks = self._get_songs_detail(batch_ids)
+                        all_tracks.extend(batch_tracks)
+                        if i + batch_size < len(all_song_ids):
+                            time.sleep(0.3)  # 避免请求过快
+                    tracks = all_tracks
+                    logger.info(f"✅ 获取到全部 {len(tracks)} 首歌曲详情")
+                
+                # 收集所有专辑ID
                 album_ids = set()
                 
                 # 从 tracks 中提取基本信息和专辑ID
@@ -645,7 +665,7 @@ class NeteaseDownloader(BaseDownloader):
                         'cover': album.get('picUrl', ''),
                     }
                 
-                logger.info(f"📋 歌单 '{playlist_name}' 共 {len(tracks)} 首歌曲，涉及 {len(album_ids)} 张专辑")
+                logger.info(f"📋 歌单涉及 {len(album_ids)} 张专辑")
                 
                 # 获取所有相关专辑的曲目信息
                 album_track_info = {}
@@ -658,10 +678,15 @@ class NeteaseDownloader(BaseDownloader):
                 
                 logger.info(f"✅ 获取到 {len(album_track_info)} 首歌曲的专辑曲目信息")
                 
-                # 构建完整的歌曲列表
+                # 构建完整的歌曲列表（保持原始顺序）
                 result = []
-                for song_id in song_ids:
+                for song_id in all_song_ids:
                     song_data = basic_info.get(song_id, {})
+                    if not song_data:
+                        # 如果没有详情，可能是获取失败的歌曲
+                        logger.warning(f"⚠️ 歌曲 {song_id} 详情获取失败，跳过")
+                        continue
+                    
                     track_data = album_track_info.get(song_id, {})
                     
                     # 合并基本信息和曲目信息
@@ -689,6 +714,40 @@ class NeteaseDownloader(BaseDownloader):
             import traceback
             logger.error(traceback.format_exc())
             return [], '未知歌单'
+    
+    def _get_songs_detail(self, song_ids: List[str]) -> List[Dict]:
+        """批量获取歌曲详情
+        
+        Args:
+            song_ids: 歌曲ID列表
+            
+        Returns:
+            歌曲详情列表
+        """
+        try:
+            url = f"{self.api_url}/api/song/detail"
+            # 使用 c 参数批量获取
+            c_param = json.dumps([{"id": sid} for sid in song_ids])
+            params = {
+                'c': c_param,
+                'ids': json.dumps([int(sid) for sid in song_ids]),
+                'csrf_token': ''
+            }
+            
+            response = self.session.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get('code') == 200:
+                songs = data.get('songs', [])
+                logger.debug(f"✅ 批量获取 {len(songs)} 首歌曲详情")
+                return songs
+            
+            return []
+            
+        except Exception as e:
+            logger.warning(f"⚠️ 批量获取歌曲详情失败: {e}")
+            return []
 
     # ============ 下载功能 ============
     

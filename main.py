@@ -292,7 +292,7 @@ class MusicBot:
                         pass  # 忽略编辑消息的错误
             
             def sync_progress_callback(progress_info: dict):
-                """同步进度回调（将被转换为异步调用）"""
+                """同步进度回调（将被转换为异步调用）- 复刻原项目格式"""
                 status = progress_info.get('status', '')
                 
                 # 处理单文件下载进度（实时更新）
@@ -304,7 +304,13 @@ class MusicBot:
                     eta = progress_info.get('eta', 0)
                     filename = progress_info.get('filename', '未知文件')
                     
-                    # 创建进度条
+                    # 智能截断过长文件名（参考原项目）
+                    if len(filename) > 35:
+                        import os
+                        name, ext = os.path.splitext(filename)
+                        filename = name[:30] + "..." + ext
+                    
+                    # 创建进度条（参考原项目：20字符长度）
                     bar_length = 20
                     filled_length = int(bar_length * percent / 100)
                     progress_bar = '█' * filled_length + '░' * (bar_length - filled_length)
@@ -314,10 +320,11 @@ class MusicBot:
                     total_mb = total / (1024 * 1024)
                     speed_mb = speed / (1024 * 1024) if speed > 0 else 0
                     
-                    # 格式化预计剩余时间
+                    # 格式化预计剩余时间（参考原项目格式）
                     if eta > 0:
                         if eta >= 60:
-                            eta_str = f"{int(eta // 60)}分{int(eta % 60)}秒"
+                            mins, secs = divmod(int(eta), 60)
+                            eta_str = f"{mins}分{secs}秒"
                         else:
                             eta_str = f"{int(eta)}秒"
                     else:
@@ -340,10 +347,117 @@ class MusicBot:
                     except Exception:
                         pass
                 
+                # 处理下载中状态（yt-dlp格式，参考原项目）
+                elif status == 'downloading':
+                    downloaded_bytes = progress_info.get('downloaded_bytes', 0)
+                    total_bytes = progress_info.get('total_bytes', 0) or progress_info.get('total_bytes_estimate', 0)
+                    speed_bytes = progress_info.get('speed', 0) or 0
+                    eta_seconds = progress_info.get('eta', 0) or 0
+                    filename = progress_info.get('filename', '未知文件')
+                    
+                    # 智能截断过长文件名
+                    if len(filename) > 35:
+                        import os
+                        name, ext = os.path.splitext(os.path.basename(filename))
+                        filename = name[:30] + "..." + ext
+                    else:
+                        import os
+                        filename = os.path.basename(filename)
+                    
+                    if total_bytes > 0:
+                        percent = (downloaded_bytes / total_bytes) * 100
+                        bar_length = 20
+                        filled_length = int(bar_length * percent / 100)
+                        progress_bar = '█' * filled_length + '░' * (bar_length - filled_length)
+                        
+                        downloaded_mb = downloaded_bytes / (1024 * 1024)
+                        total_mb = total_bytes / (1024 * 1024)
+                        speed_mb = speed_bytes / (1024 * 1024) if speed_bytes > 0 else 0
+                        
+                        # 格式化预计剩余时间
+                        if eta_seconds > 0:
+                            mins, secs = divmod(int(eta_seconds), 60)
+                            if mins > 0:
+                                eta_str = f"{mins}分{secs}秒"
+                            else:
+                                eta_str = f"{secs}秒"
+                        elif speed_bytes > 0 and total_bytes > downloaded_bytes:
+                            remaining = total_bytes - downloaded_bytes
+                            eta_calc = int(remaining / speed_bytes)
+                            mins, secs = divmod(eta_calc, 60)
+                            if mins > 0:
+                                eta_str = f"{mins}分{secs}秒"
+                            else:
+                                eta_str = f"{secs}秒"
+                        else:
+                            eta_str = "计算中..."
+                        
+                        # 原项目格式
+                        progress_text = (
+                            f"🎵 音乐：{filename}\n"
+                            f"💾 大小：{downloaded_mb:.2f}MB / {total_mb:.2f}MB\n"
+                            f"⚡ 速度：{speed_mb:.2f}MB/s\n"
+                            f"⏳ 预计剩余：{eta_str}\n"
+                            f"📊 进度：{progress_bar} ({percent:.1f}%)"
+                        )
+                    else:
+                        downloaded_mb = downloaded_bytes / (1024 * 1024)
+                        speed_mb = speed_bytes / (1024 * 1024) if speed_bytes > 0 else 0
+                        
+                        progress_text = (
+                            f"🎵 音乐：{filename}\n"
+                            f"💾 大小：{downloaded_mb:.2f}MB / 计算中...\n"
+                            f"⚡ 速度：{speed_mb:.2f}MB/s\n"
+                            f"⏳ 预计剩余：计算中...\n"
+                            f"📊 进度：下载中..."
+                        )
+                    
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            asyncio.create_task(update_progress_message(progress_text))
+                    except Exception:
+                        pass
+                
+                # 处理下载完成状态
+                elif status == 'finished':
+                    filename = progress_info.get('filename', '未知文件')
+                    total_bytes = progress_info.get('total_bytes', 0)
+                    
+                    import os
+                    filename = os.path.basename(filename) if filename else '未知文件'
+                    if len(filename) > 35:
+                        name, ext = os.path.splitext(filename)
+                        filename = name[:30] + "..." + ext
+                    
+                    total_mb = total_bytes / (1024 * 1024) if total_bytes > 0 else 0
+                    progress_bar = '█' * 20
+                    
+                    # 原项目完成格式
+                    progress_text = (
+                        f"🎵 音乐：{filename}\n"
+                        f"💾 大小：{total_mb:.2f}MB\n"
+                        f"⚡ 速度：完成\n"
+                        f"⏳ 预计剩余：0秒\n"
+                        f"📊 进度：{progress_bar} (100.0%)"
+                    )
+                    
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            asyncio.create_task(update_progress_message(progress_text))
+                    except Exception:
+                        pass
+                
                 elif status in ['album_progress', 'playlist_progress']:
                     current = progress_info.get('current', 0)
                     total = progress_info.get('total', 0)
                     song_name = progress_info.get('song', '')
+                    album_name = progress_info.get('album', progress_info.get('playlist', ''))
+                    
+                    # 智能截断歌曲名
+                    if len(song_name) > 30:
+                        song_name = song_name[:27] + "..."
                     
                     # 创建进度条
                     bar_length = 20
@@ -355,15 +469,54 @@ class MusicBot:
                         percentage = 0
                     progress_bar = '█' * filled_length + '░' * (bar_length - filled_length)
                     
-                    # 构建进度消息 - 参考原项目格式（进度条风格）
-                    progress_text = (
-                        f"🎵 音乐：{song_name}\n"
-                        f"💾 大小：下载中...\n"
-                        f"⚡ 速度：下载中...\n"
-                        f"⏳ 预计剩余：计算中...\n"
-                        f"📊 进度：{progress_bar} ({percentage:.1f}%)\n\n"
-                        f"📝 当前：{current}/{total} 首"
-                    )
+                    # 获取当前歌曲的下载进度信息（如果有）
+                    song_downloaded = progress_info.get('song_downloaded', 0)
+                    song_total = progress_info.get('song_total', 0)
+                    song_speed = progress_info.get('song_speed', 0)
+                    song_eta = progress_info.get('song_eta', 0)
+                    
+                    if song_total > 0:
+                        song_downloaded_mb = song_downloaded / (1024 * 1024)
+                        song_total_mb = song_total / (1024 * 1024)
+                        song_speed_mb = song_speed / (1024 * 1024) if song_speed > 0 else 0
+                        song_percent = (song_downloaded / song_total) * 100
+                        
+                        # 格式化预计剩余时间
+                        if song_eta > 0:
+                            mins, secs = divmod(int(song_eta), 60)
+                            if mins > 0:
+                                eta_str = f"{mins}分{secs}秒"
+                            else:
+                                eta_str = f"{secs}秒"
+                        else:
+                            eta_str = "计算中..."
+                        
+                        song_bar_filled = int(20 * song_percent / 100)
+                        song_bar = '█' * song_bar_filled + '░' * (20 - song_bar_filled)
+                        
+                        # 原项目格式 - 带专辑/歌单进度
+                        type_label = '专辑' if status == 'album_progress' else '歌单'
+                        progress_text = (
+                            f"📀 {type_label}：{album_name}\n"
+                            f"📝 当前：{current}/{total} 首\n\n"
+                            f"🎵 音乐：{song_name}\n"
+                            f"💾 大小：{song_downloaded_mb:.2f}MB / {song_total_mb:.2f}MB\n"
+                            f"⚡ 速度：{song_speed_mb:.2f}MB/s\n"
+                            f"⏳ 预计剩余：{eta_str}\n"
+                            f"📊 进度：{song_bar} ({song_percent:.1f}%)"
+                        )
+                    else:
+                        # 简化格式（没有详细下载信息）
+                        type_label = '专辑' if status == 'album_progress' else '歌单'
+                        progress_text = (
+                            f"📀 {type_label}：{album_name}\n"
+                            f"📝 当前：{current}/{total} 首\n\n"
+                            f"🎵 音乐：{song_name}\n"
+                            f"💾 大小：下载中...\n"
+                            f"⚡ 速度：下载中...\n"
+                            f"⏳ 预计剩余：计算中...\n"
+                            f"📊 进度：{progress_bar} ({percentage:.1f}%)"
+                        )
                     
                     # 使用 asyncio 调度更新
                     try:

@@ -224,7 +224,7 @@ class YouTubeMusicDownloader(BaseDownloader):
             # 创建下载配置
             ydl_opts = self._create_ydl_opts(download_dir)
             
-            # 添加进度回调
+            # 添加进度回调 - 复刻原项目通知格式
             if progress_callback:
                 def progress_hook(d):
                     if d['status'] == 'downloading':
@@ -234,7 +234,15 @@ class YouTubeMusicDownloader(BaseDownloader):
                         eta = d.get('eta', 0)
                         filename = d.get('filename', '')
                         
+                        # 获取显示文件名
+                        display_filename = os.path.basename(filename) if filename else ''
+                        if not display_filename and song_info:
+                            display_filename = song_info.get('name', '未知')
+                        if not display_filename:
+                            display_filename = '未知'
+                        
                         if total > 0:
+                            # 使用 file_progress 状态（原项目格式）
                             progress_callback({
                                 'status': 'file_progress',
                                 'percent': (downloaded / total) * 100,
@@ -242,12 +250,33 @@ class YouTubeMusicDownloader(BaseDownloader):
                                 'total': total,
                                 'speed': speed or 0,
                                 'eta': eta or 0,
-                                'filename': os.path.basename(filename) if filename else song_info.get('name', '未知') if song_info else '未知',
+                                'filename': display_filename,
+                            })
+                        else:
+                            # 没有总大小信息时也发送进度
+                            progress_callback({
+                                'status': 'downloading',
+                                'downloaded_bytes': downloaded,
+                                'total_bytes': total,
+                                'speed': speed or 0,
+                                'eta': eta or 0,
+                                'filename': display_filename,
                             })
                     elif d['status'] == 'finished':
+                        filename = d.get('filename', '')
+                        display_filename = os.path.basename(filename) if filename else ''
+                        if not display_filename and song_info:
+                            display_filename = song_info.get('name', '未知')
+                        
+                        # 获取文件大小
+                        total_bytes = 0
+                        if filename and os.path.exists(filename):
+                            total_bytes = os.path.getsize(filename)
+                        
                         progress_callback({
                             'status': 'finished',
-                            'filename': d.get('filename', ''),
+                            'filename': display_filename,
+                            'total_bytes': total_bytes,
                         })
                 
                 ydl_opts['progress_hooks'] = [progress_hook]
@@ -365,16 +394,44 @@ class YouTubeMusicDownloader(BaseDownloader):
             
             for i, entry in enumerate(entries, 1):
                 video_id = entry.get('id', entry.get('url', ''))
+                song_name = entry.get('title', '未知')
                 
                 if progress_callback:
+                    # 原项目格式 - 播放列表进度
                     progress_callback({
                         'status': 'playlist_progress',
                         'current': i,
                         'total': len(entries),
-                        'song': entry.get('title', ''),
+                        'song': song_name,
+                        'playlist': playlist_info.get('title', '未知'),
                     })
                 
-                result = self.download_song(video_id, download_dir, quality, progress_callback)
+                # 创建带专辑/歌单信息的进度回调包装器
+                def create_wrapped_callback(song_idx, total_songs, song_title, playlist_title):
+                    def wrapped_callback(progress_info):
+                        if progress_callback:
+                            # 添加专辑/歌单上下文信息
+                            enhanced_info = progress_info.copy()
+                            enhanced_info['playlist'] = playlist_title
+                            
+                            if progress_info.get('status') == 'file_progress':
+                                # 单曲下载进度 - 附加专辑进度信息
+                                enhanced_info['song_downloaded'] = progress_info.get('downloaded', 0)
+                                enhanced_info['song_total'] = progress_info.get('total', 0)
+                                enhanced_info['song_speed'] = progress_info.get('speed', 0)
+                                enhanced_info['song_eta'] = progress_info.get('eta', 0)
+                                enhanced_info['status'] = 'playlist_progress'
+                                enhanced_info['current'] = song_idx
+                                enhanced_info['total'] = total_songs
+                                enhanced_info['song'] = song_title
+                                enhanced_info['album'] = playlist_title
+                            
+                            progress_callback(enhanced_info)
+                    return wrapped_callback
+                
+                wrapped_progress = create_wrapped_callback(i, len(entries), song_name, playlist_info.get('title', ''))
+                
+                result = self.download_song(video_id, download_dir, quality, wrapped_progress)
                 results['songs'].append(result)
                 
                 if result.get('success'):

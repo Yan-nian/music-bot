@@ -37,9 +37,9 @@ EXPOSE 5000
 # 设置卷
 VOLUME ["/downloads", "/app/db", "/app/cookies", "/app/logs"]
 
-# 健康检查
+# 健康检查（使用不需要登录的端点）
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:5000/api/status || exit 1
+    CMD curl -f http://localhost:5000/api/health || exit 1
 
 # 启动命令
 CMD ["python", "main.py"]

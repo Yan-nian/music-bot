@@ -75,6 +75,18 @@ def init_app(db_path: str = None):
     return app
 
 
+# ==================== 健康检查 ====================
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """健康检查端点（不需要登录）"""
+    return jsonify({
+        'success': True,
+        'status': 'healthy',
+        'service': 'music-bot'
+    })
+
+
 # ==================== 认证 API ====================
 
 @app.route('/api/auth/login', methods=['POST'])

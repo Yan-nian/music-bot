@@ -526,13 +526,28 @@ class MusicBot:
                     except Exception:
                         pass
             
-            # 下载
+            # 下载 - 使用 asyncio.to_thread 在线程池中执行同步下载，避免阻塞事件循环
             if content_type == 'song':
-                result = downloader.download_song(content_id, download_dir, progress_callback=sync_progress_callback)
+                result = await asyncio.to_thread(
+                    lambda: downloader.download_song(
+                        content_id, download_dir, 
+                        progress_callback=sync_progress_callback
+                    )
+                )
             elif content_type == 'album':
-                result = downloader.download_album(content_id, download_dir, progress_callback=sync_progress_callback)
+                result = await asyncio.to_thread(
+                    lambda: downloader.download_album(
+                        content_id, download_dir,
+                        progress_callback=sync_progress_callback
+                    )
+                )
             elif content_type == 'playlist':
-                result = downloader.download_playlist(content_id, download_dir, progress_callback=sync_progress_callback)
+                result = await asyncio.to_thread(
+                    lambda: downloader.download_playlist(
+                        content_id, download_dir,
+                        progress_callback=sync_progress_callback
+                    )
+                )
             else:
                 result = {'success': False, 'error': f'不支持的类型: {content_type}'}
             

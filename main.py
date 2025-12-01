@@ -506,14 +506,20 @@ class MusicBot:
                 
                 if result:
                     new_count = result.get('new_songs', 0)
-                    downloaded = result.get('downloaded', 0)
-                    failed = result.get('failed', 0)
+                    downloaded = result.get('downloaded_songs', 0)
+                    skipped = result.get('skipped_songs', 0)
+                    failed = result.get('failed_songs', 0)
+                    total = result.get('total_songs', 0)
                     
                     if new_count > 0:
                         logger.info(f"✅ 歌单 {playlist_name} 同步完成: 新增 {new_count} 首，成功 {downloaded}，失败 {failed}")
                         
-                        # 发送 Telegram 通知
-                        await self._send_playlist_sync_notification(playlist_name, new_count, downloaded, failed)
+                        # 发送 Telegram 通知（使用新模板）
+                        await self._send_playlist_sync_notification(
+                            result=result,
+                            playlist_name=playlist_name,
+                            is_auto=True
+                        )
                     else:
                         logger.info(f"✅ 歌单 {playlist_name} 已是最新，无新歌曲")
                 else:
@@ -524,10 +530,16 @@ class MusicBot:
         except Exception as e:
             logger.error(f"❌ 同步歌单 {playlist_name} 出错: {e}")
     
-    async def _send_playlist_sync_notification(self, playlist_name: str, new_count: int, downloaded: int, failed: int):
-        """发送歌单同步通知"""
+    async def _send_playlist_sync_notification(self, result: dict, playlist_name: str, is_auto: bool = False):
+        """发送歌单同步通知（使用新模板）"""
         try:
             if not self.app or not self.app.bot:
+                return
+            
+            # 检查是否启用通知
+            if not self.config.get('telegram_notify_enabled', True):
+                return
+            if not self.config.get('telegram_notify_complete', True):
                 return
             
             # 获取允许的用户列表
@@ -535,15 +547,32 @@ class MusicBot:
             if not allowed_users:
                 return
             
-            message = (
-                f"📋 **歌单同步完成**\n\n"
-                f"📁 歌单: {playlist_name}\n"
-                f"🆕 新增: {new_count} 首\n"
-                f"✅ 成功下载: {downloaded} 首\n"
+            # 使用新的消息模板
+            from web.tg_notifier import MessageTemplates
+            
+            total = result.get('total_songs', 0)
+            new_songs = result.get('new_songs', 0)
+            downloaded = result.get('downloaded_songs', 0)
+            skipped = result.get('skipped_songs', 0)
+            failed = result.get('failed_songs', 0)
+            
+            # 获取失败歌曲列表
+            songs = result.get('songs', [])
+            failed_songs_list = [s for s in songs if not s.get('success')]
+            
+            message = MessageTemplates.playlist_sync_completed(
+                playlist_name=playlist_name,
+                total_songs=total,
+                new_songs=new_songs,
+                downloaded=downloaded,
+                failed=failed,
+                skipped=skipped,
+                failed_songs_list=failed_songs_list
             )
             
-            if failed > 0:
-                message += f"❌ 下载失败: {failed} 首\n"
+            # 如果是自动同步，添加标识
+            if is_auto:
+                message = "🤖 [自动同步]\n\n" + message
             
             # 向所有配置的用户发送通知
             for user_id in allowed_users.split(','):
@@ -552,8 +581,7 @@ class MusicBot:
                     try:
                         await self.app.bot.send_message(
                             chat_id=int(user_id),
-                            text=message,
-                            parse_mode=ParseMode.MARKDOWN
+                            text=message
                         )
                     except Exception as e:
                         logger.debug(f"发送通知给用户 {user_id} 失败: {e}")

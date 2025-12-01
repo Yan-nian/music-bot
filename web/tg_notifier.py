@@ -336,6 +336,173 @@ class MessageTemplates:
     def download_error(error_message: str) -> str:
         """下载错误消息"""
         return f"❌ 下载失败\n{error_message}"
+    
+    # ==================== 歌单订阅通知模板 ====================
+    
+    @staticmethod
+    def playlist_sync_started(playlist_name: str, playlist_id: str, is_auto: bool = False) -> str:
+        """歌单同步开始通知"""
+        sync_type = "🔄 自动同步" if is_auto else "📥 手动同步"
+        return (
+            f"{sync_type}歌单...\n\n"
+            f"📋 歌单：{playlist_name}\n"
+            f"🔗 ID：{playlist_id}\n"
+            f"⏳ 正在检查更新..."
+        )
+    
+    @staticmethod
+    def playlist_check_result(playlist_name: str, total_songs: int, new_songs: int, 
+                              skipped_songs: int) -> str:
+        """歌单检查结果"""
+        if new_songs == 0:
+            return (
+                f"✅ 歌单已是最新\n\n"
+                f"📋 歌单：{playlist_name}\n"
+                f"🎵 总歌曲：{total_songs} 首\n"
+                f"📦 已下载：{skipped_songs} 首\n"
+                f"🆕 新增：0 首"
+            )
+        return (
+            f"🆕 发现新歌曲！\n\n"
+            f"📋 歌单：{playlist_name}\n"
+            f"🎵 总歌曲：{total_songs} 首\n"
+            f"📦 已下载：{skipped_songs} 首\n"
+            f"🆕 新增：{new_songs} 首\n\n"
+            f"⏳ 开始下载新歌曲..."
+        )
+    
+    @staticmethod
+    def playlist_sync_progress(playlist_name: str, current: int, total: int,
+                               current_song: str, downloaded: int, failed: int) -> str:
+        """歌单同步进度"""
+        progress_bar = ProgressFormatter.create_progress_bar(current / total * 100 if total > 0 else 0)
+        
+        lines = [
+            f"📥 正在同步歌单...\n",
+            f"📋 歌单：{ProgressFormatter.truncate_name(playlist_name, 25)}",
+            f"📝 进度：{current}/{total} 首",
+            f"🎵 当前：{ProgressFormatter.truncate_name(current_song, 30)}",
+            f"📊 {progress_bar}",
+            "",
+            f"✅ 已下载：{downloaded} 首",
+        ]
+        
+        if failed > 0:
+            lines.append(f"❌ 失败：{failed} 首")
+        
+        return "\n".join(lines)
+    
+    @staticmethod
+    def playlist_sync_completed(playlist_name: str, total_songs: int, new_songs: int,
+                                downloaded: int, failed: int, skipped: int,
+                                failed_songs_list: list = None) -> str:
+        """歌单同步完成通知"""
+        status_icon = "✅" if failed == 0 else "⚠️"
+        progress_bar = ProgressFormatter.create_progress_bar(100)
+        
+        lines = [
+            f"{status_icon} 歌单同步完成！\n",
+            f"📋 歌单：{playlist_name}",
+            f"📊 {progress_bar}",
+            "",
+            f"🎵 歌单总数：{total_songs} 首",
+            f"🆕 本次新增：{new_songs} 首",
+            f"✅ 下载成功：{downloaded} 首",
+            f"⏭️ 已跳过：{skipped} 首",
+        ]
+        
+        if failed > 0:
+            lines.append(f"❌ 下载失败：{failed} 首")
+            
+            # 显示失败歌曲列表（最多5首）
+            if failed_songs_list:
+                lines.append("")
+                lines.append("❌ 失败歌曲：")
+                for song in failed_songs_list[:5]:
+                    song_name = song.get('name', song.get('song_title', '未知'))
+                    error = song.get('error', song.get('fail_reason', '未知错误'))
+                    # 截断错误信息
+                    if len(error) > 30:
+                        error = error[:27] + "..."
+                    lines.append(f"  • {ProgressFormatter.truncate_name(song_name, 20)}")
+                
+                if len(failed_songs_list) > 5:
+                    lines.append(f"  ... 还有 {len(failed_songs_list) - 5} 首")
+        
+        return "\n".join(lines)
+    
+    @staticmethod
+    def playlist_sync_error(playlist_name: str, error: str) -> str:
+        """歌单同步失败通知"""
+        return (
+            f"❌ 歌单同步失败\n\n"
+            f"📋 歌单：{playlist_name}\n"
+            f"💥 错误：{error}"
+        )
+    
+    @staticmethod
+    def all_playlists_sync_started(total: int) -> str:
+        """全部歌单同步开始"""
+        return (
+            f"🔄 开始同步所有订阅歌单\n\n"
+            f"📋 共 {total} 个歌单\n"
+            f"⏳ 正在处理..."
+        )
+    
+    @staticmethod
+    def all_playlists_sync_completed(total: int, synced: int, total_new: int, 
+                                      total_downloaded: int, total_failed: int,
+                                      results: list = None) -> str:
+        """全部歌单同步完成"""
+        status_icon = "✅" if total_failed == 0 else "⚠️"
+        
+        lines = [
+            f"{status_icon} 全部歌单同步完成！\n",
+            f"📋 处理歌单：{synced}/{total} 个",
+            f"🆕 发现新歌：{total_new} 首",
+            f"✅ 下载成功：{total_downloaded} 首",
+        ]
+        
+        if total_failed > 0:
+            lines.append(f"❌ 下载失败：{total_failed} 首")
+        
+        # 显示各歌单概要
+        if results:
+            lines.append("")
+            lines.append("📊 各歌单统计：")
+            for r in results[:8]:
+                name = ProgressFormatter.truncate_name(r.get('playlist_name', '未知'), 15)
+                new_count = r.get('new_songs', 0)
+                dl_count = r.get('downloaded', 0)
+                if r.get('success'):
+                    if new_count > 0:
+                        lines.append(f"  📋 {name}: +{new_count}首, ✅{dl_count}首")
+                    else:
+                        lines.append(f"  📋 {name}: 无更新")
+                else:
+                    lines.append(f"  📋 {name}: ❌失败")
+            
+            if len(results) > 8:
+                lines.append(f"  ... 还有 {len(results) - 8} 个歌单")
+        
+        return "\n".join(lines)
+    
+    @staticmethod
+    def song_download_failed(song_name: str, artist: str, error: str, 
+                             playlist_name: str = None) -> str:
+        """单曲下载失败通知（在歌单同步中）"""
+        lines = [
+            f"⚠️ 歌曲下载失败\n",
+            f"🎵 歌曲：{ProgressFormatter.truncate_name(song_name, 30)}",
+            f"👤 歌手：{ProgressFormatter.truncate_name(artist, 20)}",
+        ]
+        
+        if playlist_name:
+            lines.append(f"📋 歌单：{ProgressFormatter.truncate_name(playlist_name, 20)}")
+        
+        lines.append(f"💥 原因：{error}")
+        
+        return "\n".join(lines)
 
 
 class TelegramNotifier:
@@ -593,3 +760,200 @@ def get_notifier(update_interval: float = 1.0) -> TelegramNotifier:
     if _notifier is None:
         _notifier = TelegramNotifier(update_interval)
     return _notifier
+
+
+# ==================== 独立的 TG 消息发送功能 ====================
+
+class TelegramSender:
+    """独立的 Telegram 消息发送器（用于 Web API 调用）"""
+    
+    _instance = None
+    _bot = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
+    @classmethod
+    def initialize(cls, bot_token: str, proxy_url: str = None):
+        """初始化 Bot（在有配置时调用）"""
+        try:
+            import httpx
+            from telegram import Bot
+            
+            if proxy_url:
+                # 创建带代理的 httpx client
+                client = httpx.AsyncClient(proxy=proxy_url)
+                cls._bot = Bot(token=bot_token, request=client)
+            else:
+                cls._bot = Bot(token=bot_token)
+            
+            logger.info("✅ Telegram 消息发送器初始化成功")
+            return True
+        except ImportError:
+            logger.warning("⚠️ telegram 模块未安装，TG 通知不可用")
+            return False
+        except Exception as e:
+            logger.error(f"❌ 初始化 Telegram 发送器失败: {e}")
+            return False
+    
+    @classmethod
+    async def send_message_async(cls, chat_id: int, text: str, parse_mode: str = None) -> bool:
+        """异步发送消息"""
+        if not cls._bot:
+            return False
+        
+        try:
+            await cls._bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode=parse_mode
+            )
+            return True
+        except Exception as e:
+            logger.error(f"❌ 发送 TG 消息失败: {e}")
+            return False
+    
+    @classmethod
+    def send_message_sync(cls, chat_id: int, text: str, parse_mode: str = None) -> bool:
+        """同步发送消息（会阻塞）"""
+        try:
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(cls.send_message_async(chat_id, text, parse_mode))
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.error(f"❌ 同步发送 TG 消息失败: {e}")
+            return False
+
+
+def send_telegram_notification(config_manager, message: str, parse_mode: str = None) -> bool:
+    """
+    发送 Telegram 通知给所有配置的用户
+    
+    Args:
+        config_manager: 配置管理器实例
+        message: 消息文本
+        parse_mode: 解析模式 (None, 'Markdown', 'HTML')
+    
+    Returns:
+        是否至少成功发送给一个用户
+    """
+    try:
+        # 检查是否启用通知
+        if not config_manager.get_config('telegram_notify_enabled', True):
+            return False
+        
+        bot_token = config_manager.get_config('telegram_bot_token', '')
+        if not bot_token:
+            return False
+        
+        allowed_users = config_manager.get_config('telegram_allowed_users', '')
+        if not allowed_users:
+            return False
+        
+        # 获取代理配置
+        proxy_url = None
+        if config_manager.get_config('proxy_enabled', False):
+            proxy_url = config_manager.get_config('proxy_host', '')
+        
+        # 初始化发送器
+        TelegramSender.initialize(bot_token, proxy_url)
+        
+        # 发送给所有用户
+        success_count = 0
+        for user_id in allowed_users.split(','):
+            user_id = user_id.strip()
+            if user_id:
+                try:
+                    if TelegramSender.send_message_sync(int(user_id), message, parse_mode):
+                        success_count += 1
+                except ValueError:
+                    logger.warning(f"⚠️ 无效的用户 ID: {user_id}")
+        
+        return success_count > 0
+        
+    except Exception as e:
+        logger.error(f"❌ 发送 TG 通知失败: {e}")
+        return False
+
+
+def notify_playlist_sync_result(config_manager, result: Dict[str, Any], 
+                                playlist_name: str = None, is_auto: bool = False):
+    """
+    发送歌单同步结果通知
+    
+    Args:
+        config_manager: 配置管理器实例
+        result: 同步结果字典
+        playlist_name: 歌单名称（可选，会从 result 中获取）
+        is_auto: 是否是自动同步
+    """
+    try:
+        # 检查是否启用完成通知
+        if not config_manager.get_config('telegram_notify_complete', True):
+            return
+        
+        name = playlist_name or result.get('playlist_title', '未知歌单')
+        total = result.get('total_songs', 0)
+        new_songs = result.get('new_songs', 0)
+        downloaded = result.get('downloaded_songs', 0)
+        skipped = result.get('skipped_songs', 0)
+        failed = result.get('failed_songs', 0)
+        
+        # 获取失败歌曲列表
+        songs = result.get('songs', [])
+        failed_songs_list = [s for s in songs if not s.get('success')]
+        
+        # 生成通知消息
+        message = MessageTemplates.playlist_sync_completed(
+            playlist_name=name,
+            total_songs=total,
+            new_songs=new_songs,
+            downloaded=downloaded,
+            failed=failed,
+            skipped=skipped,
+            failed_songs_list=failed_songs_list
+        )
+        
+        send_telegram_notification(config_manager, message)
+        
+    except Exception as e:
+        logger.error(f"❌ 发送歌单同步通知失败: {e}")
+
+
+def notify_all_playlists_sync_result(config_manager, total: int, results: list):
+    """
+    发送全部歌单同步结果通知
+    
+    Args:
+        config_manager: 配置管理器实例
+        total: 歌单总数
+        results: 各歌单同步结果列表
+    """
+    try:
+        if not config_manager.get_config('telegram_notify_complete', True):
+            return
+        
+        synced = len([r for r in results if r.get('success')])
+        total_new = sum(r.get('new_songs', 0) for r in results)
+        total_downloaded = sum(r.get('downloaded', 0) for r in results)
+        total_failed = sum(r.get('failed', 0) for r in results if r.get('failed'))
+        
+        message = MessageTemplates.all_playlists_sync_completed(
+            total=total,
+            synced=synced,
+            total_new=total_new,
+            total_downloaded=total_downloaded,
+            total_failed=total_failed,
+            results=results
+        )
+        
+        send_telegram_notification(config_manager, message)
+        
+    except Exception as e:
+        logger.error(f"❌ 发送全部歌单同步通知失败: {e}")

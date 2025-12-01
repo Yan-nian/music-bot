@@ -596,6 +596,8 @@ def sync_playlist(playlist_id: str):
         if not playlist:
             return jsonify({'success': False, 'error': '歌单不存在'}), 404
         
+        playlist_name = playlist.get('playlist_name', '未知歌单')
+        
         # 获取下载目录
         download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
         
@@ -607,6 +609,13 @@ def sync_playlist(playlist_id: str):
             playlist_id=playlist_id,
             download_dir=download_dir
         )
+        
+        # 发送 TG 通知
+        try:
+            from web.tg_notifier import notify_playlist_sync_result
+            notify_playlist_sync_result(config_manager, result, playlist_name)
+        except Exception as e:
+            logger.debug(f"发送 TG 通知失败: {e}")
         
         return jsonify({
             'success': result.get('success', False),
@@ -689,6 +698,7 @@ def sync_all_playlists():
         results = []
         total_new_songs = 0
         total_downloaded = 0
+        total_failed = 0
         
         for playlist in playlists:
             try:
@@ -696,15 +706,18 @@ def sync_all_playlists():
                     playlist_id=playlist['playlist_id'],
                     download_dir=download_dir
                 )
+                failed_count = result.get('failed_songs', 0)
                 results.append({
                     'playlist_id': playlist['playlist_id'],
                     'playlist_name': playlist['playlist_name'],
                     'success': result.get('success', False),
                     'new_songs': result.get('new_songs', 0),
-                    'downloaded': result.get('downloaded_songs', 0)
+                    'downloaded': result.get('downloaded_songs', 0),
+                    'failed': failed_count
                 })
                 total_new_songs += result.get('new_songs', 0)
                 total_downloaded += result.get('downloaded_songs', 0)
+                total_failed += failed_count
             except Exception as e:
                 logger.error(f"同步歌单 {playlist['playlist_id']} 失败: {e}")
                 results.append({
@@ -714,13 +727,21 @@ def sync_all_playlists():
                     'error': str(e)
                 })
         
+        # 发送 TG 通知
+        try:
+            from web.tg_notifier import notify_all_playlists_sync_result
+            notify_all_playlists_sync_result(config_manager, len(playlists), results)
+        except Exception as e:
+            logger.debug(f"发送 TG 通知失败: {e}")
+        
         return jsonify({
             'success': True,
             'data': {
                 'total': len(playlists),
                 'results': results,
                 'total_new_songs': total_new_songs,
-                'total_downloaded': total_downloaded
+                'total_downloaded': total_downloaded,
+                'total_failed': total_failed
             }
         })
         

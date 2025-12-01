@@ -779,33 +779,45 @@ def send_telegram_notification(config_manager, message: str, parse_mode: str = N
     import requests
     
     try:
+        logger.info("📤 send_telegram_notification 被调用")
+        
         # 检查是否启用通知
-        if not config_manager.get_config('telegram_notify_enabled', True):
-            logger.debug("TG 通知未启用")
+        notify_enabled = config_manager.get_config('telegram_notify_enabled', True)
+        logger.info(f"📤 telegram_notify_enabled = {notify_enabled}")
+        if not notify_enabled:
+            logger.info("📤 TG 通知未启用")
             return False
         
         bot_token = config_manager.get_config('telegram_bot_token', '')
+        logger.info(f"📤 bot_token 是否存在: {bool(bot_token)}, 长度: {len(bot_token) if bot_token else 0}")
         if not bot_token:
-            logger.debug("未配置 Bot Token")
+            logger.warning("📤 未配置 Bot Token")
             return False
         
         allowed_users = config_manager.get_config('telegram_allowed_users', '')
+        logger.info(f"📤 allowed_users = '{allowed_users}'")
         if not allowed_users:
-            logger.debug("未配置允许的用户")
+            logger.warning("📤 未配置允许的用户")
             return False
         
         # 获取代理配置
         proxies = None
-        if config_manager.get_config('proxy_enabled', False):
+        proxy_enabled = config_manager.get_config('proxy_enabled', False)
+        if proxy_enabled:
             proxy_host = config_manager.get_config('proxy_host', '')
             if proxy_host:
                 proxies = {
                     'http': proxy_host,
                     'https': proxy_host
                 }
+                logger.info(f"📤 使用代理: {proxy_host}")
         
         # Telegram API URL
-        api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        api_url = f"https://api.telegram.org/bot{bot_token[:10]}...{bot_token[-5:]}/sendMessage"
+        logger.info(f"📤 API URL (部分): {api_url}")
+        
+        # 实际 API URL
+        real_api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
         
         # 发送给所有用户
         success_count = 0
@@ -813,6 +825,7 @@ def send_telegram_notification(config_manager, message: str, parse_mode: str = N
             user_id = user_id.strip()
             if user_id:
                 try:
+                    logger.info(f"📤 准备发送给用户: {user_id}")
                     payload = {
                         'chat_id': int(user_id),
                         'text': message,
@@ -820,25 +833,32 @@ def send_telegram_notification(config_manager, message: str, parse_mode: str = N
                     if parse_mode:
                         payload['parse_mode'] = parse_mode
                     
-                    response = requests.post(api_url, json=payload, proxies=proxies, timeout=30)
+                    logger.info(f"📤 发送请求中...")
+                    response = requests.post(real_api_url, json=payload, proxies=proxies, timeout=30)
+                    logger.info(f"📤 响应状态码: {response.status_code}")
                     
                     if response.status_code == 200:
                         result = response.json()
+                        logger.info(f"📤 响应内容: ok={result.get('ok')}")
                         if result.get('ok'):
                             success_count += 1
-                            logger.debug(f"✅ 已发送 TG 通知给用户 {user_id}")
+                            logger.info(f"✅ 已发送 TG 通知给用户 {user_id}")
                         else:
                             logger.warning(f"⚠️ TG API 返回错误: {result.get('description', '未知错误')}")
                     else:
-                        logger.warning(f"⚠️ TG API 请求失败: HTTP {response.status_code}")
+                        logger.warning(f"⚠️ TG API 请求失败: HTTP {response.status_code}, 响应: {response.text[:200]}")
                         
                 except ValueError:
                     logger.warning(f"⚠️ 无效的用户 ID: {user_id}")
                 except Exception as e:
-                    logger.warning(f"⚠️ 发送给用户 {user_id} 失败: {e}")
+                    logger.error(f"⚠️ 发送给用户 {user_id} 失败: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
         
         if success_count > 0:
             logger.info(f"✅ TG 通知已发送给 {success_count} 个用户")
+        else:
+            logger.warning(f"⚠️ TG 通知发送失败，没有成功发送给任何用户")
         
         return success_count > 0
         
@@ -861,8 +881,13 @@ def notify_playlist_sync_result(config_manager, result: Dict[str, Any],
         is_auto: 是否是自动同步
     """
     try:
+        logger.info(f"📨 notify_playlist_sync_result 被调用: {playlist_name}")
+        
         # 检查是否启用完成通知
-        if not config_manager.get_config('telegram_notify_complete', True):
+        notify_complete = config_manager.get_config('telegram_notify_complete', True)
+        logger.info(f"📨 telegram_notify_complete = {notify_complete}")
+        if not notify_complete:
+            logger.info("📨 完成通知未启用，跳过")
             return
         
         name = playlist_name or result.get('playlist_title', '未知歌单')
@@ -871,6 +896,8 @@ def notify_playlist_sync_result(config_manager, result: Dict[str, Any],
         downloaded = result.get('downloaded_songs', 0)
         skipped = result.get('skipped_songs', 0)
         failed = result.get('failed_songs', 0)
+        
+        logger.info(f"📨 歌单同步结果: total={total}, new={new_songs}, downloaded={downloaded}, failed={failed}")
         
         # 获取失败歌曲列表
         songs = result.get('songs', [])
@@ -887,10 +914,16 @@ def notify_playlist_sync_result(config_manager, result: Dict[str, Any],
             failed_songs_list=failed_songs_list
         )
         
-        send_telegram_notification(config_manager, message)
+        logger.info(f"📨 生成的消息长度: {len(message)} 字符")
+        
+        # 发送通知
+        success = send_telegram_notification(config_manager, message)
+        logger.info(f"📨 发送结果: {success}")
         
     except Exception as e:
         logger.error(f"❌ 发送歌单同步通知失败: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 
 def notify_all_playlists_sync_result(config_manager, total: int, results: list):

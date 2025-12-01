@@ -613,9 +613,12 @@ def sync_playlist(playlist_id: str):
         # 发送 TG 通知
         try:
             from web.tg_notifier import notify_playlist_sync_result
+            logger.info(f"📨 准备发送歌单同步 TG 通知: {playlist_name}")
             notify_playlist_sync_result(config_manager, result, playlist_name)
         except Exception as e:
-            logger.debug(f"发送 TG 通知失败: {e}")
+            logger.error(f"❌ 发送 TG 通知失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
         
         return jsonify({
             'success': result.get('success', False),

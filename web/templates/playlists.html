@@ -325,6 +325,10 @@
             color: var(--warning);
         }
 
+        .stat-item:nth-child(4) .stat-value {
+            color: var(--danger);
+        }
+
         .stat-item .stat-label {
             font-size: 0.75rem;
             color: var(--text-secondary);
@@ -447,7 +451,7 @@
             background: white;
             border-radius: 20px;
             padding: 28px;
-            max-width: 500px;
+            max-width: 600px;
             width: 90%;
             max-height: 80vh;
             overflow-y: auto;
@@ -596,6 +600,24 @@
         </div>
     </div>
 
+    <!-- 失败歌曲模态框 -->
+    <div class="modal" id="failedModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>⚠️ 下载失败的歌曲</h3>
+                <button class="modal-close" onclick="closeModal('failedModal')">×</button>
+            </div>
+            <div class="modal-body" id="failedModalBody">
+                <!-- 动态内容 -->
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('failedModal')">关闭</button>
+                <button class="btn btn-warning" id="failedModalRetryBtn">🔄 重试全部</button>
+                <button class="btn btn-primary" id="failedModalExportBtn">📥 导出列表</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast 通知 -->
     <div class="toast" id="toast"></div>
 
@@ -696,6 +718,10 @@
                             <div class="stat-value">${playlist.stats?.pending || 0}</div>
                             <div class="stat-label">待下载</div>
                         </div>
+                        <div class="stat-item">
+                            <div class="stat-value">${playlist.stats?.failed || 0}</div>
+                            <div class="stat-label">失败</div>
+                        </div>
                     </div>
                     
                     <div class="playlist-meta">
@@ -711,6 +737,11 @@
                         <button class="btn btn-warning btn-small" onclick="checkPlaylist('${playlist.playlist_id}')">
                             🔍 检查更新
                         </button>
+                        ${(playlist.stats?.failed || 0) > 0 ? `
+                        <button class="btn btn-danger btn-small" onclick="showFailedSongs('${playlist.playlist_id}', '${playlist.playlist_name || '未知歌单'}')">
+                            ⚠️ 查看失败 (${playlist.stats.failed})
+                        </button>
+                        ` : ''}
                         <button class="btn btn-secondary btn-small" onclick="togglePlaylist('${playlist.playlist_id}', ${!playlist.enabled})">
                             ${playlist.enabled ? '⏸️ 禁用' : '▶️ 启用'}
                         </button>
@@ -936,6 +967,198 @@
         // 关闭模态框
         function closeModal(modalId) {
             document.getElementById(modalId).classList.remove('show');
+        }
+
+        // 当前查看失败歌曲的歌单信息
+        let currentFailedPlaylist = { id: '', name: '' };
+
+        // 显示失败歌曲
+        async function showFailedSongs(playlistId, playlistName) {
+            currentFailedPlaylist = { id: playlistId, name: playlistName };
+            
+            try {
+                const response = await fetchWithAuth(`/api/playlists/${playlistId}/failed-songs`);
+                const result = await response.json();
+
+                if (result.success) {
+                    const failedSongs = result.data;
+                    const modalBody = document.getElementById('failedModalBody');
+                    
+                    if (!failedSongs || failedSongs.length === 0) {
+                        modalBody.innerHTML = `
+                            <div style="text-align: center; padding: 20px;">
+                                <div style="font-size: 3rem; margin-bottom: 16px;">✅</div>
+                                <h3>没有失败的歌曲</h3>
+                            </div>
+                        `;
+                        document.getElementById('failedModalRetryBtn').style.display = 'none';
+                        document.getElementById('failedModalExportBtn').style.display = 'none';
+                    } else {
+                        modalBody.innerHTML = `
+                            <div style="margin-bottom: 16px;">
+                                <strong>歌单:</strong> ${playlistName}
+                                <span style="color: var(--text-secondary); margin-left: 8px;">(${failedSongs.length} 首失败)</span>
+                            </div>
+                            <div style="max-height: 400px; overflow-y: auto;">
+                                <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+                                    <thead>
+                                        <tr style="background: rgba(0,0,0,0.03); position: sticky; top: 0;">
+                                            <th style="padding: 10px; text-align: left; border-bottom: 1px solid var(--border);">歌曲</th>
+                                            <th style="padding: 10px; text-align: left; border-bottom: 1px solid var(--border);">艺术家</th>
+                                            <th style="padding: 10px; text-align: left; border-bottom: 1px solid var(--border);">失败原因</th>
+                                            <th style="padding: 10px; text-align: center; border-bottom: 1px solid var(--border);">重试</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${failedSongs.map(song => `
+                                            <tr style="border-bottom: 1px solid var(--border);">
+                                                <td style="padding: 10px;">
+                                                    <div style="font-weight: 500;">${song.song_name || '未知'}</div>
+                                                    <div style="font-size: 0.75rem; color: var(--text-secondary);">ID: ${song.song_id}</div>
+                                                </td>
+                                                <td style="padding: 10px; color: var(--text-secondary);">${song.artist || '未知'}</td>
+                                                <td style="padding: 10px;">
+                                                    <span style="color: var(--danger); font-size: 0.85rem; background: rgba(255,59,48,0.1); padding: 4px 8px; border-radius: 4px;">
+                                                        ${formatFailReason(song.fail_reason)}
+                                                    </span>
+                                                    ${song.retry_count > 1 ? `<span style="color: var(--text-secondary); font-size: 0.75rem; margin-left: 4px;">(重试${song.retry_count}次)</span>` : ''}
+                                                </td>
+                                                <td style="padding: 10px; text-align: center;">
+                                                    <button class="btn btn-small btn-secondary" onclick="retrySingleSong('${playlistId}', '${song.song_id}')" title="重试下载">🔄</button>
+                                                </td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
+                        `;
+                        
+                        document.getElementById('failedModalRetryBtn').style.display = 'inline-flex';
+                        document.getElementById('failedModalRetryBtn').onclick = () => retryAllFailedSongs(playlistId);
+                        
+                        document.getElementById('failedModalExportBtn').style.display = 'inline-flex';
+                        document.getElementById('failedModalExportBtn').onclick = () => exportFailedSongs(failedSongs, playlistName);
+                    }
+                    
+                    document.getElementById('failedModal').classList.add('show');
+                } else {
+                    showToast(result.error || '获取失败歌曲列表失败', 'error');
+                }
+            } catch (error) {
+                console.error('获取失败歌曲失败:', error);
+                showToast('获取失败歌曲列表失败', 'error');
+            }
+        }
+
+        // 格式化失败原因（使其更易读）
+        function formatFailReason(reason) {
+            if (!reason) return '未知错误';
+            
+            // 常见失败原因的友好显示
+            const reasonMap = {
+                '无法获取下载链接，可能需要 VIP 或配置 cookies': 'VIP/版权限制',
+                '无法获取歌曲信息': '歌曲信息获取失败',
+                '下载失败': '网络下载失败',
+            };
+            
+            for (const [key, value] of Object.entries(reasonMap)) {
+                if (reason.includes(key)) return value;
+            }
+            
+            // 截断过长的原因
+            return reason.length > 30 ? reason.substring(0, 30) + '...' : reason;
+        }
+
+        // 重试单首歌曲
+        async function retrySingleSong(playlistId, songId) {
+            showToast('正在重试下载...', 'info');
+            
+            try {
+                // 先清除失败状态
+                await fetchWithAuth(`/api/playlists/${playlistId}/clear-failed`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ song_id: songId })
+                });
+                
+                // 触发同步（会重新下载未下载的歌曲）
+                const response = await fetchWithAuth(`/api/playlists/${playlistId}/sync`, {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showToast('重试完成', 'success');
+                    // 刷新失败列表
+                    showFailedSongs(playlistId, currentFailedPlaylist.name);
+                    loadPlaylists();
+                } else {
+                    showToast(result.error || '重试失败', 'error');
+                }
+            } catch (error) {
+                console.error('重试下载失败:', error);
+                showToast('重试下载失败', 'error');
+            }
+        }
+
+        // 重试所有失败歌曲
+        async function retryAllFailedSongs(playlistId) {
+            if (!confirm('确定要重试所有失败的歌曲吗？这可能需要一些时间。')) {
+                return;
+            }
+            
+            showToast('正在重试所有失败歌曲...', 'info');
+            
+            try {
+                const response = await fetchWithAuth(`/api/playlists/${playlistId}/retry-failed`, {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    const data = result.data;
+                    showToast(`重试完成: ${data.success}/${data.retried} 首成功`, data.still_failed > 0 ? 'warning' : 'success');
+                    closeModal('failedModal');
+                    loadPlaylists();
+                } else {
+                    showToast(result.error || '重试失败', 'error');
+                }
+            } catch (error) {
+                console.error('重试所有失败歌曲失败:', error);
+                showToast('重试失败', 'error');
+            }
+        }
+
+        // 导出失败歌曲列表
+        function exportFailedSongs(failedSongs, playlistName) {
+            const exportData = {
+                playlist_name: playlistName,
+                export_time: new Date().toLocaleString('zh-CN'),
+                total_failed: failedSongs.length,
+                songs: failedSongs.map(song => ({
+                    song_id: song.song_id,
+                    song_name: song.song_name,
+                    artist: song.artist,
+                    album: song.album,
+                    fail_reason: song.fail_reason,
+                    fail_time: song.fail_time,
+                    retry_count: song.retry_count
+                }))
+            };
+            
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `failed_songs_${playlistName}_${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            showToast('已导出失败歌曲列表', 'success');
         }
 
         // 页面加载时获取歌单列表

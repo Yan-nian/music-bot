@@ -186,6 +186,9 @@ class ConfigManager:
                         album TEXT,
                         downloaded BOOLEAN DEFAULT 0,
                         download_time TIMESTAMP,
+                        fail_reason TEXT,
+                        fail_time TIMESTAMP,
+                        retry_count INTEGER DEFAULT 0,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         UNIQUE(playlist_id, song_id)
                     )
@@ -582,24 +585,29 @@ class ConfigManager:
             return False
     
     def add_playlist_song(self, playlist_id: str, song_id: str, song_name: str = None,
-                         artist: str = None, album: str = None, downloaded: bool = False) -> bool:
+                         artist: str = None, album: str = None, downloaded: bool = False,
+                         fail_reason: str = None) -> bool:
         """添加歌单歌曲记录"""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 download_time = datetime.now().isoformat() if downloaded else None
+                fail_time = datetime.now().isoformat() if fail_reason else None
                 cursor.execute("""
                     INSERT INTO playlist_songs 
-                    (playlist_id, song_id, song_name, artist, album, downloaded, download_time)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (playlist_id, song_id, song_name, artist, album, downloaded, download_time, fail_reason, fail_time)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(playlist_id, song_id) DO UPDATE SET
                         song_name = COALESCE(?, song_name),
                         artist = COALESCE(?, artist),
                         album = COALESCE(?, album),
                         downloaded = ?,
-                        download_time = CASE WHEN ? THEN COALESCE(download_time, CURRENT_TIMESTAMP) ELSE download_time END
-                """, (playlist_id, song_id, song_name, artist, album, downloaded, download_time,
-                      song_name, artist, album, downloaded, downloaded))
+                        download_time = CASE WHEN ? THEN COALESCE(download_time, CURRENT_TIMESTAMP) ELSE download_time END,
+                        fail_reason = ?,
+                        fail_time = CASE WHEN ? IS NOT NULL THEN CURRENT_TIMESTAMP ELSE fail_time END,
+                        retry_count = CASE WHEN ? IS NOT NULL THEN retry_count + 1 ELSE retry_count END
+                """, (playlist_id, song_id, song_name, artist, album, downloaded, download_time, fail_reason, fail_time,
+                      song_name, artist, album, downloaded, downloaded, fail_reason, fail_reason, fail_reason))
                 conn.commit()
                 return True
         except Exception as e:
@@ -680,6 +688,76 @@ class ConfigManager:
             logger.error(f"❌ 检查歌曲下载状态失败: {e}")
             return False
     
+    def mark_song_failed(self, playlist_id: str, song_id: str, fail_reason: str) -> bool:
+        """标记歌曲下载失败"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE playlist_songs 
+                    SET fail_reason = ?, fail_time = CURRENT_TIMESTAMP, retry_count = retry_count + 1
+                    WHERE playlist_id = ? AND song_id = ?
+                """, (fail_reason, playlist_id, song_id))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"❌ 标记歌曲失败状态失败: {e}")
+            return False
+    
+    def get_failed_songs(self, playlist_id: str) -> List[Dict[str, Any]]:
+        """获取歌单中下载失败的歌曲"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT * FROM playlist_songs 
+                    WHERE playlist_id = ? AND downloaded = 0 AND fail_reason IS NOT NULL
+                    ORDER BY fail_time DESC
+                """, (playlist_id,))
+                
+                rows = cursor.fetchall()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"❌ 获取失败歌曲列表失败: {e}")
+            return []
+    
+    def clear_song_fail_status(self, playlist_id: str, song_id: str) -> bool:
+        """清除歌曲的失败状态（用于重试）"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE playlist_songs 
+                    SET fail_reason = NULL, fail_time = NULL
+                    WHERE playlist_id = ? AND song_id = ?
+                """, (playlist_id, song_id))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"❌ 清除失败状态失败: {e}")
+            return False
+    
+    def get_all_failed_songs(self) -> List[Dict[str, Any]]:
+        """获取所有歌单中下载失败的歌曲"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT ps.*, sp.playlist_name 
+                    FROM playlist_songs ps
+                    LEFT JOIN subscribed_playlists sp ON ps.playlist_id = sp.playlist_id
+                    WHERE ps.downloaded = 0 AND ps.fail_reason IS NOT NULL
+                    ORDER BY ps.fail_time DESC
+                """, ())
+                
+                rows = cursor.fetchall()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"❌ 获取所有失败歌曲失败: {e}")
+            return []
+    
     def get_playlist_stats(self, playlist_id: str) -> Dict[str, int]:
         """获取歌单统计信息"""
         try:
@@ -689,19 +767,24 @@ class ConfigManager:
                 cursor.execute("""
                     SELECT 
                         COUNT(*) as total,
-                        SUM(CASE WHEN downloaded = 1 THEN 1 ELSE 0 END) as downloaded
+                        SUM(CASE WHEN downloaded = 1 THEN 1 ELSE 0 END) as downloaded,
+                        SUM(CASE WHEN downloaded = 0 AND fail_reason IS NOT NULL THEN 1 ELSE 0 END) as failed
                     FROM playlist_songs WHERE playlist_id = ?
                 """, (playlist_id,))
                 
                 row = cursor.fetchone()
+                total = row[0] or 0
+                downloaded = row[1] or 0
+                failed = row[2] or 0
                 return {
-                    'total': row[0] or 0,
-                    'downloaded': row[1] or 0,
-                    'pending': (row[0] or 0) - (row[1] or 0)
+                    'total': total,
+                    'downloaded': downloaded,
+                    'failed': failed,
+                    'pending': total - downloaded - failed
                 }
         except Exception as e:
             logger.error(f"❌ 获取歌单统计失败: {e}")
-            return {'total': 0, 'downloaded': 0, 'pending': 0}
+            return {'total': 0, 'downloaded': 0, 'failed': 0, 'pending': 0}
     
     # ==================== 日志管理 ====================
     

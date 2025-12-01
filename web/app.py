@@ -729,6 +729,105 @@ def sync_all_playlists():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/playlists/<playlist_id>/failed-songs', methods=['GET'])
+@login_required
+def get_playlist_failed_songs(playlist_id: str):
+    """获取歌单中下载失败的歌曲"""
+    try:
+        failed_songs = config_manager.get_failed_songs(playlist_id)
+        return jsonify({
+            'success': True,
+            'data': failed_songs
+        })
+    except Exception as e:
+        logger.error(f"获取失败歌曲失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/playlists/failed-songs', methods=['GET'])
+@login_required
+def get_all_failed_songs():
+    """获取所有歌单中下载失败的歌曲"""
+    try:
+        failed_songs = config_manager.get_all_failed_songs()
+        return jsonify({
+            'success': True,
+            'data': failed_songs
+        })
+    except Exception as e:
+        logger.error(f"获取所有失败歌曲失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/playlists/<playlist_id>/retry-failed', methods=['POST'])
+@login_required
+def retry_failed_songs(playlist_id: str):
+    """重试下载失败的歌曲"""
+    try:
+        # 获取失败的歌曲
+        failed_songs = config_manager.get_failed_songs(playlist_id)
+        
+        if not failed_songs:
+            return jsonify({
+                'success': True,
+                'message': '没有需要重试的歌曲',
+                'data': {'retried': 0, 'success': 0}
+            })
+        
+        download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
+        
+        from downloaders.netease import NeteaseDownloader
+        downloader = NeteaseDownloader(config_manager)
+        
+        success_count = 0
+        for song in failed_songs:
+            # 清除失败状态
+            config_manager.clear_song_fail_status(playlist_id, song['song_id'])
+            
+            # 尝试重新下载
+            result = downloader.download_song(song['song_id'], download_dir)
+            
+            if result.get('success'):
+                config_manager.mark_song_downloaded(playlist_id, song['song_id'])
+                success_count += 1
+            else:
+                # 重新标记失败
+                config_manager.mark_song_failed(playlist_id, song['song_id'], result.get('error', '重试失败'))
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'retried': len(failed_songs),
+                'success': success_count,
+                'still_failed': len(failed_songs) - success_count
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"重试下载失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/playlists/<playlist_id>/clear-failed', methods=['POST'])
+@login_required
+def clear_failed_songs(playlist_id: str):
+    """清除歌单中所有失败记录（用于重新检测）"""
+    try:
+        failed_songs = config_manager.get_failed_songs(playlist_id)
+        
+        for song in failed_songs:
+            config_manager.clear_song_fail_status(playlist_id, song['song_id'])
+        
+        return jsonify({
+            'success': True,
+            'message': f'已清除 {len(failed_songs)} 条失败记录'
+        })
+        
+    except Exception as e:
+        logger.error(f"清除失败记录失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # ==================== 日志 API ====================
 
 @app.route('/api/logs', methods=['GET'])

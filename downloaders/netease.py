@@ -1073,6 +1073,12 @@ class NeteaseDownloader(BaseDownloader):
                     results['bitrate'] = result.get('bitrate')
                 if result.get('file_format'):
                     results['file_format'] = result.get('file_format')
+            else:
+                # 记录下载失败原因
+                fail_reason = result.get('error', '未知错误')
+                if self.config_manager:
+                    self.config_manager.mark_song_failed(playlist_id, song['id'], fail_reason)
+                results['failed_songs'] = results.get('failed_songs', 0) + 1
             
             time.sleep(0.5)
         

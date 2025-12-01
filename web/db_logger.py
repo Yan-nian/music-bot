@@ -85,7 +85,19 @@ class DatabaseLogHandler(logging.Handler):
 
 
 def setup_database_logging(config_manager, level: int = logging.INFO):
-    """设置数据库日志记录"""
+    """设置数据库日志记录
+    
+    注意：只添加到根 logger，避免日志重复记录
+    子 logger 会自动向上传播日志到根 logger
+    """
+    # 检查是否已经添加过数据库 handler，避免重复添加
+    root_logger = logging.getLogger()
+    
+    # 检查是否已存在 DatabaseLogHandler
+    for handler in root_logger.handlers:
+        if isinstance(handler, DatabaseLogHandler):
+            return handler  # 已存在，直接返回
+    
     # 创建数据库 handler
     db_handler = DatabaseLogHandler(config_manager)
     db_handler.setLevel(level)
@@ -94,24 +106,9 @@ def setup_database_logging(config_manager, level: int = logging.INFO):
     formatter = logging.Formatter('%(message)s')
     db_handler.setFormatter(formatter)
     
-    # 添加到根 logger
-    root_logger = logging.getLogger()
+    # 只添加到根 logger
+    # 子 logger 默认 propagate=True，会自动传播到根 logger
     root_logger.addHandler(db_handler)
-    
-    # 同时添加到关键模块的 logger
-    loggers_to_add = [
-        'music_bot',
-        'downloaders.metadata',
-        'downloaders.netease',
-        'downloaders.apple_music',
-        'downloaders.youtube_music',
-        'web.app',
-        'web.tg_setup',
-    ]
-    
-    for logger_name in loggers_to_add:
-        logger = logging.getLogger(logger_name)
-        logger.addHandler(db_handler)
     
     return db_handler
 

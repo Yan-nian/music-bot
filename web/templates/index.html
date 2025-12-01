@@ -51,6 +51,37 @@
             border-radius: 20px;
             backdrop-filter: blur(20px);
             box-shadow: var(--shadow);
+            position: relative;
+        }
+
+        .header-actions {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            display: flex;
+            gap: 8px;
+        }
+
+        .header-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            background: rgba(0, 0, 0, 0.05);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            text-decoration: none;
+            transition: all 0.2s ease;
+        }
+
+        .header-btn:hover {
+            background: var(--accent);
+            transform: scale(1.05);
+        }
+
+        .header-btn-danger:hover {
+            background: var(--danger);
         }
 
         .header h1 {
@@ -397,6 +428,10 @@
     <div class="container">
         <!-- 头部 -->
         <div class="header">
+            <div class="header-actions">
+                <a href="/account" class="header-btn" title="账号管理">👤</a>
+                <a href="/logout" class="header-btn header-btn-danger" title="退出登录">🚪</a>
+            </div>
             <h1>🎵 Music Bot 配置中心</h1>
             <p>管理你的音乐下载机器人配置</p>
         </div>

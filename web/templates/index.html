@@ -877,10 +877,20 @@
             });
         });
 
+        // 全局请求处理：如果返回401，跳转到登录页
+        async function fetchWithAuth(url, options = {}) {
+            const response = await fetch(url, options);
+            if (response.status === 401) {
+                window.location.href = '/login';
+                throw new Error('未登录');
+            }
+            return response;
+        }
+
         // 加载配置
         async function loadConfig() {
             try {
-                const response = await fetch('/api/config');
+                const response = await fetchWithAuth('/api/config');
                 const result = await response.json();
                 
                 if (result.success) {
@@ -954,7 +964,7 @@
             try {
                 const data = getFormData(section);
                 
-                const response = await fetch('/api/config', {
+                const response = await fetchWithAuth('/api/config', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -984,7 +994,7 @@
                     Object.assign(allData, getFormData(section));
                 });
                 
-                const response = await fetch('/api/config', {
+                const response = await fetchWithAuth('/api/config', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -1013,7 +1023,7 @@
             }
             
             try {
-                const response = await fetch('/api/config/reset', {
+                const response = await fetchWithAuth('/api/config/reset', {
                     method: 'POST'
                 });
                 

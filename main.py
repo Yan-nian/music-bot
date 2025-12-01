@@ -278,6 +278,9 @@ class MusicBot:
             # 使用平台专属下载路径
             download_dir = self.get_download_path_for_platform(downloader_name)
             
+            # 获取当前事件循环，用于从子线程调度异步任务
+            main_loop = asyncio.get_running_loop()
+            
             # 创建进度回调 - 用于动态更新进度
             last_update_time = [0]  # 使用列表以便在闭包中修改
             
@@ -339,11 +342,9 @@ class MusicBot:
                         f"📊 进度：{progress_bar} ({percent:.1f}%)"
                     )
                     
-                    # 使用 asyncio 调度更新
+                    # 使用 asyncio 调度更新 - 从子线程安全调用
                     try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            asyncio.create_task(update_progress_message(progress_text))
+                        asyncio.run_coroutine_threadsafe(update_progress_message(progress_text), main_loop)
                     except Exception:
                         pass
                 
@@ -412,10 +413,9 @@ class MusicBot:
                             f"📊 进度：下载中..."
                         )
                     
+                    # 使用 asyncio 调度更新 - 从子线程安全调用
                     try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            asyncio.create_task(update_progress_message(progress_text))
+                        asyncio.run_coroutine_threadsafe(update_progress_message(progress_text), main_loop)
                     except Exception:
                         pass
                 
@@ -442,10 +442,9 @@ class MusicBot:
                         f"📊 进度：{progress_bar} (100.0%)"
                     )
                     
+                    # 使用 asyncio 调度更新 - 从子线程安全调用
                     try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            asyncio.create_task(update_progress_message(progress_text))
+                        asyncio.run_coroutine_threadsafe(update_progress_message(progress_text), main_loop)
                     except Exception:
                         pass
                 
@@ -518,11 +517,9 @@ class MusicBot:
                             f"📊 进度：{progress_bar} ({percentage:.1f}%)"
                         )
                     
-                    # 使用 asyncio 调度更新
+                    # 使用 asyncio 调度更新 - 从子线程安全调用
                     try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            asyncio.create_task(update_progress_message(progress_text))
+                        asyncio.run_coroutine_threadsafe(update_progress_message(progress_text), main_loop)
                     except Exception:
                         pass
             

@@ -737,6 +737,9 @@
                         <button class="btn btn-warning btn-small" onclick="checkPlaylist('${playlist.playlist_id}')">
                             🔍 检查更新
                         </button>
+                        <button class="btn btn-secondary btn-small" onclick="refreshPlaylistMetadata('${playlist.playlist_id}', '${playlist.playlist_name || '未知歌单'}')" title="只刷新已下载歌曲的元数据标签，不重新下载">
+                            🏷️ 刷新标签
+                        </button>
                         ${(playlist.stats?.failed || 0) > 0 ? `
                         <button class="btn btn-danger btn-small" onclick="showFailedSongs('${playlist.playlist_id}', '${playlist.playlist_name || '未知歌单'}')">
                             ⚠️ 查看失败 (${playlist.stats.failed})
@@ -1159,6 +1162,106 @@
             URL.revokeObjectURL(url);
             
             showToast('已导出失败歌曲列表', 'success');
+        }
+
+        // 刷新歌单元数据（不重新下载）
+        async function refreshPlaylistMetadata(playlistId, playlistName) {
+            if (!confirm(`确定要刷新歌单 "${playlistName}" 中已下载歌曲的元数据标签吗？\n\n此操作只更新文件标签，不会重新下载文件。`)) {
+                return;
+            }
+            
+            showToast('正在刷新元数据，请稍候...', 'info');
+            
+            try {
+                const response = await fetchWithAuth(`/api/playlists/${playlistId}/refresh-metadata`, {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    const data = result.data;
+                    showToast(`元数据刷新完成: 更新 ${data.updated_songs} 首，跳过 ${data.skipped_songs} 首，失败 ${data.failed_songs} 首`, 
+                              data.failed_songs > 0 ? 'warning' : 'success');
+                    
+                    // 显示详细结果
+                    if (data.failed_songs > 0 || data.skipped_songs > 0) {
+                        showMetadataRefreshResult(data);
+                    }
+                } else {
+                    showToast(result.error || '刷新元数据失败', 'error');
+                }
+            } catch (error) {
+                console.error('刷新元数据失败:', error);
+                showToast('刷新元数据失败', 'error');
+            }
+        }
+
+        // 显示元数据刷新结果
+        function showMetadataRefreshResult(data) {
+            const modalBody = document.getElementById('checkModalBody');
+            
+            let detailsHtml = '';
+            if (data.details && data.details.length > 0) {
+                const failedItems = data.details.filter(d => d.status === 'failed' || d.status === 'skipped');
+                if (failedItems.length > 0) {
+                    detailsHtml = `
+                        <div style="margin-top: 16px; max-height: 300px; overflow-y: auto;">
+                            <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+                                <thead>
+                                    <tr style="background: rgba(0,0,0,0.03);">
+                                        <th style="padding: 8px; text-align: left;">歌曲</th>
+                                        <th style="padding: 8px; text-align: left;">状态</th>
+                                        <th style="padding: 8px; text-align: left;">原因</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${failedItems.map(item => `
+                                        <tr style="border-bottom: 1px solid var(--border);">
+                                            <td style="padding: 8px;">${item.song_name || item.song_id || '未知'}</td>
+                                            <td style="padding: 8px;">
+                                                <span style="color: ${item.status === 'failed' ? 'var(--danger)' : 'var(--text-secondary)'};">
+                                                    ${item.status === 'failed' ? '❌ 失败' : '⏭️ 跳过'}
+                                                </span>
+                                            </td>
+                                            <td style="padding: 8px; color: var(--text-secondary); font-size: 0.8rem;">${item.reason || '-'}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    `;
+                }
+            }
+            
+            modalBody.innerHTML = `
+                <div style="text-align: center;">
+                    <h2 style="font-size: 1.2rem; margin-bottom: 16px;">🏷️ 元数据刷新结果</h2>
+                    <p style="color: var(--text-secondary); margin-bottom: 16px;">${data.playlist_name || ''}</p>
+                    <div style="display: flex; justify-content: center; gap: 20px; margin: 20px 0;">
+                        <div style="text-align: center;">
+                            <div style="font-size: 2rem; font-weight: 700; color: var(--accent);">${data.total_songs}</div>
+                            <div style="font-size: 0.85rem; color: var(--text-secondary);">总数</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 2rem; font-weight: 700; color: var(--success);">${data.updated_songs}</div>
+                            <div style="font-size: 0.85rem; color: var(--text-secondary);">已更新</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 2rem; font-weight: 700; color: var(--text-secondary);">${data.skipped_songs}</div>
+                            <div style="font-size: 0.85rem; color: var(--text-secondary);">跳过</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 2rem; font-weight: 700; color: var(--danger);">${data.failed_songs}</div>
+                            <div style="font-size: 0.85rem; color: var(--text-secondary);">失败</div>
+                        </div>
+                    </div>
+                    ${detailsHtml}
+                </div>
+            `;
+            
+            document.getElementById('checkModalSyncBtn').style.display = 'none';
+            document.getElementById('checkModal').classList.add('show');
         }
 
         // 页面加载时获取歌单列表

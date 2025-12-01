@@ -828,6 +828,57 @@ def clear_failed_songs(playlist_id: str):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/playlists/<playlist_id>/refresh-metadata', methods=['POST'])
+@login_required
+def refresh_playlist_metadata(playlist_id: str):
+    """刷新歌单已下载歌曲的元数据（不重新下载）"""
+    try:
+        download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
+        
+        from downloaders.netease import NeteaseDownloader
+        downloader = NeteaseDownloader(config_manager)
+        
+        result = downloader.refresh_playlist_metadata(
+            playlist_id=playlist_id,
+            download_dir=download_dir
+        )
+        
+        return jsonify({
+            'success': result.get('success', False),
+            'data': result
+        })
+        
+    except Exception as e:
+        logger.error(f"刷新元数据失败: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/refresh-metadata', methods=['POST'])
+@login_required
+def refresh_all_metadata():
+    """刷新下载目录中所有音乐文件的元数据"""
+    try:
+        download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
+        
+        from downloaders.netease import NeteaseDownloader
+        downloader = NeteaseDownloader(config_manager)
+        
+        result = downloader.refresh_metadata(download_dir=download_dir)
+        
+        return jsonify({
+            'success': result.get('success', False),
+            'data': result
+        })
+        
+    except Exception as e:
+        logger.error(f"刷新元数据失败: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # ==================== 日志 API ====================
 
 @app.route('/api/logs', methods=['GET'])

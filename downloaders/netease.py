@@ -1100,6 +1100,401 @@ class NeteaseDownloader(BaseDownloader):
         """同步歌单（检查并下载新歌曲的别名方法）"""
         return self.download_playlist_incremental(playlist_id, download_dir, quality, progress_callback)
     
+    def refresh_metadata(self, download_dir: str, 
+                        progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
+        """刷新下载目录中所有音乐文件的元数据（不下载，只更新标签）
+        
+        扫描下载目录，根据文件名解析歌曲信息，从 API 获取最新元数据并更新文件标签。
+        
+        Args:
+            download_dir: 下载目录
+            progress_callback: 进度回调
+            
+        Returns:
+            刷新结果统计
+        """
+        logger.info(f"🔄 开始刷新元数据: {download_dir}")
+        
+        results = {
+            'success': True,
+            'total_files': 0,
+            'updated_files': 0,
+            'skipped_files': 0,
+            'failed_files': 0,
+            'details': []
+        }
+        
+        # 支持的音频格式
+        audio_extensions = {'.mp3', '.flac', '.m4a', '.wav', '.aac'}
+        
+        # 递归扫描目录中的音频文件
+        audio_files = []
+        download_path = Path(download_dir)
+        
+        if not download_path.exists():
+            return {'success': False, 'error': f'目录不存在: {download_dir}'}
+        
+        for file_path in download_path.rglob('*'):
+            if file_path.suffix.lower() in audio_extensions:
+                audio_files.append(file_path)
+        
+        results['total_files'] = len(audio_files)
+        logger.info(f"📁 发现 {len(audio_files)} 个音频文件")
+        
+        if not audio_files:
+            results['message'] = '没有找到音频文件'
+            return results
+        
+        # 处理每个文件
+        for i, file_path in enumerate(audio_files, 1):
+            if progress_callback:
+                progress_callback({
+                    'status': 'metadata_refresh',
+                    'current': i,
+                    'total': len(audio_files),
+                    'file': file_path.name,
+                })
+            
+            try:
+                # 尝试从现有元数据或文件名解析歌曲信息
+                song_info = self._extract_song_info_from_file(file_path)
+                
+                if not song_info:
+                    logger.warning(f"⚠️ 无法解析文件信息: {file_path.name}")
+                    results['skipped_files'] += 1
+                    results['details'].append({
+                        'file': str(file_path),
+                        'status': 'skipped',
+                        'reason': '无法解析歌曲信息'
+                    })
+                    continue
+                
+                # 如果有歌曲ID，从 API 获取最新信息
+                if song_info.get('song_id'):
+                    api_info = self.get_song_info(song_info['song_id'])
+                    if api_info:
+                        # 获取专辑详细信息（包含 track_number）
+                        if api_info.get('album_id'):
+                            track_info = self.get_album_track_info(str(api_info['album_id']))
+                            if song_info['song_id'] in track_info:
+                                api_info.update(track_info[song_info['song_id']])
+                        song_info.update(api_info)
+                
+                # 更新元数据
+                success = self._add_metadata_to_file(
+                    str(file_path),
+                    song_info,
+                    cover_url=song_info.get('cover')
+                )
+                
+                if success:
+                    results['updated_files'] += 1
+                    results['details'].append({
+                        'file': str(file_path),
+                        'status': 'updated',
+                        'song': song_info.get('name', '未知')
+                    })
+                    logger.info(f"✅ 更新元数据: {file_path.name}")
+                else:
+                    results['failed_files'] += 1
+                    results['details'].append({
+                        'file': str(file_path),
+                        'status': 'failed',
+                        'reason': '元数据写入失败'
+                    })
+                
+            except Exception as e:
+                logger.error(f"❌ 处理文件失败 {file_path.name}: {e}")
+                results['failed_files'] += 1
+                results['details'].append({
+                    'file': str(file_path),
+                    'status': 'failed',
+                    'reason': str(e)
+                })
+            
+            time.sleep(0.2)  # 避免 API 请求过快
+        
+        logger.info(f"✅ 元数据刷新完成: 更新 {results['updated_files']}, 跳过 {results['skipped_files']}, 失败 {results['failed_files']}")
+        return results
+    
+    def _extract_song_info_from_file(self, file_path: Path) -> Optional[Dict[str, Any]]:
+        """从音频文件提取歌曲信息（优先读取现有标签，其次解析文件名）
+        
+        Args:
+            file_path: 音频文件路径
+            
+        Returns:
+            歌曲信息字典，包含 name, artist, album, song_id 等
+        """
+        song_info = {}
+        
+        # 1. 尝试从现有元数据读取
+        try:
+            from mutagen import File as MutagenFile
+            audio = MutagenFile(str(file_path), easy=True)
+            
+            if audio:
+                # 提取基本标签
+                if audio.get('title'):
+                    song_info['name'] = audio['title'][0]
+                if audio.get('artist'):
+                    song_info['artist'] = audio['artist'][0]
+                if audio.get('album'):
+                    song_info['album'] = audio['album'][0]
+                if audio.get('albumartist'):
+                    song_info['album_artist'] = audio['albumartist'][0]
+                    
+        except Exception as e:
+            logger.debug(f"读取现有元数据失败: {e}")
+        
+        # 2. 如果元数据不完整，尝试从文件名解析
+        if not song_info.get('name'):
+            filename = file_path.stem  # 不含扩展名
+            
+            # 常见文件名格式: "歌曲名" 或 "歌曲名 - 艺术家"
+            if ' - ' in filename:
+                parts = filename.split(' - ', 1)
+                song_info['name'] = parts[0].strip()
+                if len(parts) > 1:
+                    song_info['artist'] = parts[1].strip()
+            else:
+                song_info['name'] = filename
+        
+        # 3. 从目录结构推断专辑和艺术家
+        # 假设目录格式: {ArtistName}/{AlbumName}/song.mp3
+        try:
+            parent = file_path.parent
+            if parent.name and not song_info.get('album'):
+                song_info['album'] = parent.name
+            
+            grandparent = parent.parent
+            if grandparent.name and not song_info.get('artist'):
+                # 检查是否是下载根目录
+                if grandparent.name not in ['downloads', 'netease', 'music']:
+                    song_info['artist'] = grandparent.name
+        except Exception:
+            pass
+        
+        # 4. 尝试通过歌曲名搜索获取ID
+        if song_info.get('name') and not song_info.get('song_id'):
+            search_query = song_info['name']
+            if song_info.get('artist'):
+                search_query += f" {song_info['artist']}"
+            
+            search_results = self.search_songs(search_query, limit=5)
+            
+            # 查找最匹配的结果
+            for result in search_results:
+                if self._is_song_match(song_info, result):
+                    song_info['song_id'] = result['id']
+                    # 更新其他信息
+                    song_info['name'] = result['name']
+                    song_info['artist'] = result['artist']
+                    song_info['album'] = result.get('album', song_info.get('album', ''))
+                    song_info['cover'] = result.get('cover', '')
+                    break
+        
+        return song_info if song_info.get('name') else None
+    
+    def _is_song_match(self, local_info: Dict, api_info: Dict) -> bool:
+        """判断本地歌曲信息与API结果是否匹配"""
+        local_name = local_info.get('name', '').lower().strip()
+        api_name = api_info.get('name', '').lower().strip()
+        
+        # 歌曲名必须相似
+        if local_name not in api_name and api_name not in local_name:
+            # 检查是否有大部分重叠
+            if len(set(local_name) & set(api_name)) < min(len(local_name), len(api_name)) * 0.5:
+                return False
+        
+        # 如果有艺术家信息，也检查匹配
+        local_artist = local_info.get('artist', '').lower().strip()
+        api_artist = api_info.get('artist', '').lower().strip()
+        
+        if local_artist and api_artist:
+            # 检查艺术家是否有部分匹配
+            local_artists = set(local_artist.replace('、', ',').replace('/', ',').split(','))
+            api_artists = set(api_artist.replace('、', ',').replace('/', ',').split(','))
+            
+            local_artists = {a.strip() for a in local_artists}
+            api_artists = {a.strip() for a in api_artists}
+            
+            if not local_artists & api_artists:
+                # 没有完全匹配，检查部分包含
+                matched = False
+                for la in local_artists:
+                    for aa in api_artists:
+                        if la in aa or aa in la:
+                            matched = True
+                            break
+                    if matched:
+                        break
+                if not matched:
+                    return False
+        
+        return True
+    
+    def refresh_playlist_metadata(self, playlist_id: str, download_dir: str,
+                                  progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
+        """刷新歌单中已下载歌曲的元数据
+        
+        只更新数据库中标记为已下载的歌曲，从 API 获取最新元数据并更新文件标签。
+        
+        Args:
+            playlist_id: 歌单ID
+            download_dir: 下载目录
+            progress_callback: 进度回调
+            
+        Returns:
+            刷新结果统计
+        """
+        logger.info(f"🔄 开始刷新歌单元数据: {playlist_id}")
+        
+        # 获取歌单中已下载的歌曲记录
+        if not self.config_manager:
+            return {'success': False, 'error': '配置管理器不可用'}
+        
+        downloaded_songs = self.config_manager.get_playlist_songs(playlist_id, downloaded_only=True)
+        
+        if not downloaded_songs:
+            return {
+                'success': True,
+                'message': '没有已下载的歌曲',
+                'total_songs': 0,
+                'updated_songs': 0
+            }
+        
+        # 获取歌单最新信息（包含完整的元数据）
+        songs, playlist_name = self.get_playlist_songs(playlist_id)
+        songs_dict = {s['id']: s for s in songs}
+        
+        results = {
+            'success': True,
+            'playlist_id': playlist_id,
+            'playlist_name': playlist_name,
+            'total_songs': len(downloaded_songs),
+            'updated_songs': 0,
+            'skipped_songs': 0,
+            'failed_songs': 0,
+            'details': []
+        }
+        
+        for i, record in enumerate(downloaded_songs, 1):
+            song_id = record['song_id']
+            
+            if progress_callback:
+                progress_callback({
+                    'status': 'metadata_refresh',
+                    'current': i,
+                    'total': len(downloaded_songs),
+                    'song': record.get('song_name', '未知'),
+                })
+            
+            try:
+                # 从歌单数据获取歌曲信息
+                song_info = songs_dict.get(song_id)
+                
+                if not song_info:
+                    # 如果歌单中找不到，单独获取
+                    song_info = self.get_song_info(song_id)
+                    if song_info and song_info.get('album_id'):
+                        track_info = self.get_album_track_info(str(song_info['album_id']))
+                        if song_id in track_info:
+                            song_info.update(track_info[song_id])
+                
+                if not song_info:
+                    results['skipped_songs'] += 1
+                    results['details'].append({
+                        'song_id': song_id,
+                        'status': 'skipped',
+                        'reason': '无法获取歌曲信息'
+                    })
+                    continue
+                
+                # 查找本地文件
+                file_path = self._find_song_file(download_dir, song_info)
+                
+                if not file_path:
+                    results['skipped_songs'] += 1
+                    results['details'].append({
+                        'song_id': song_id,
+                        'song_name': song_info.get('name', '未知'),
+                        'status': 'skipped',
+                        'reason': '本地文件不存在'
+                    })
+                    continue
+                
+                # 更新元数据
+                success = self._add_metadata_to_file(
+                    str(file_path),
+                    song_info,
+                    cover_url=song_info.get('cover')
+                )
+                
+                if success:
+                    results['updated_songs'] += 1
+                    results['details'].append({
+                        'song_id': song_id,
+                        'song_name': song_info.get('name', '未知'),
+                        'file': str(file_path),
+                        'status': 'updated'
+                    })
+                    logger.info(f"✅ 更新元数据: {song_info.get('name')}")
+                else:
+                    results['failed_songs'] += 1
+                    results['details'].append({
+                        'song_id': song_id,
+                        'song_name': song_info.get('name', '未知'),
+                        'status': 'failed',
+                        'reason': '元数据写入失败'
+                    })
+                
+            except Exception as e:
+                logger.error(f"❌ 处理歌曲失败 {song_id}: {e}")
+                results['failed_songs'] += 1
+                results['details'].append({
+                    'song_id': song_id,
+                    'status': 'failed',
+                    'reason': str(e)
+                })
+            
+            time.sleep(0.3)
+        
+        logger.info(f"✅ 歌单元数据刷新完成: 更新 {results['updated_songs']}, 跳过 {results['skipped_songs']}, 失败 {results['failed_songs']}")
+        return results
+    
+    def _find_song_file(self, download_dir: str, song_info: Dict) -> Optional[Path]:
+        """在下载目录中查找歌曲文件
+        
+        Args:
+            download_dir: 下载目录
+            song_info: 歌曲信息
+            
+        Returns:
+            找到的文件路径，未找到返回 None
+        """
+        audio_extensions = ['.flac', '.mp3', '.m4a', '.wav', '.aac']
+        
+        # 方法1: 根据配置的目录格式查找
+        for ext in audio_extensions:
+            filename = self._build_filename(song_info, ext.lstrip('.'))
+            save_dir = self._build_directory(download_dir, song_info)
+            file_path = Path(save_dir) / filename
+            
+            if file_path.exists():
+                return file_path
+        
+        # 方法2: 递归搜索匹配文件名
+        song_name = self.clean_filename(song_info.get('name', ''))
+        if song_name:
+            download_path = Path(download_dir)
+            for ext in audio_extensions:
+                # 搜索包含歌曲名的文件
+                for file_path in download_path.rglob(f'*{song_name}*{ext}'):
+                    return file_path
+        
+        return None
+    
     def _get_quality_name(self, bitrate: int) -> str:
         """根据码率返回音质名称"""
         if bitrate >= 900000:

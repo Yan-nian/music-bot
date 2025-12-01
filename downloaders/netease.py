@@ -15,15 +15,16 @@ from pathlib import Path
 from typing import Optional, Dict, List, Any, Callable
 
 from .base import BaseDownloader
-from .metadata import MusicMetadataManager
 
 logger = logging.getLogger(__name__)
 
 # 检查元数据模块是否可用
 try:
+    from .metadata import MusicMetadataManager
     METADATA_AVAILABLE = True
     logger.info("✅ 成功导入音乐元数据模块")
 except ImportError as e:
+    MusicMetadataManager = None
     METADATA_AVAILABLE = False
     logger.warning(f"⚠️ 音乐元数据模块不可用: {e}")
 
@@ -453,21 +454,26 @@ class NeteaseDownloader(BaseDownloader):
                         else:
                             artist_name = album_artist
                         
+                        # 获取曲目编号，优先使用 API 返回的 no 字段，否则使用索引
+                        track_no = song.get('no', 0)
+                        if not track_no or track_no == 0:
+                            track_no = i
+                        
                         result.append({
                             'id': str(song['id']),
                             'name': song.get('name', '未知'),
                             'artist': artist_name,
                             'album': album_name,
                             'album_artist': album_artist,  # 关键：统一的专辑艺术家
-                            'track_number': song.get('no', i),  # 使用曲目编号
+                            'track_number': track_no,  # 使用曲目编号
                             'total_tracks': total_tracks,  # 关键：专辑总曲目数
-                            'disc_number': song.get('cd', '1'),  # 碟片编号
+                            'disc_number': song.get('cd', '1') or '1',  # 碟片编号
                             'cover': album_cover,
                             'duration': song.get('duration', 0) // 1000,  # 转换为秒
                             'publish_time': album_publish_time,  # 专辑发布时间
                         })
                     
-                    logger.info(f"✅ 获取专辑歌曲成功: {len(result)} 首")
+                    logger.info(f"✅ 获取专辑歌曲成功: {len(result)} 首, 示例: track_number={result[0].get('track_number')}, total_tracks={result[0].get('total_tracks')}")
                     return result
                 else:
                     logger.warning(f"⚠️ 专辑 {album_name} 中没有歌曲")
@@ -545,6 +551,7 @@ class NeteaseDownloader(BaseDownloader):
             
             # 合并额外元数据（来自专辑/歌单等，包含track_number, total_tracks等）
             if extra_metadata:
+                logger.info(f"📝 合并额外元数据: track={extra_metadata.get('track_number')}, total={extra_metadata.get('total_tracks')}, album_artist={extra_metadata.get('album_artist')}")
                 song_info.update(extra_metadata)
             
             # 获取下载链接（支持降级）
@@ -562,13 +569,22 @@ class NeteaseDownloader(BaseDownloader):
             if os.path.exists(filepath):
                 file_size = os.path.getsize(filepath)
                 logger.info(f"📁 文件已存在: {filename}")
+                
+                # 即使文件已存在，也尝试更新元数据（可能之前下载时没有正确添加）
+                logger.info(f"📝 更新已存在文件的元数据...")
+                self._add_metadata_to_file(
+                    filepath,
+                    song_info,
+                    cover_url=song_info.get('cover')
+                )
+                
                 return {
                     'success': True,
                     'song_title': song_info['name'],
                     'song_artist': song_info['artist'],
                     'filepath': filepath,
                     'size_mb': file_size / (1024 * 1024),
-                    'message': '文件已存在',
+                    'message': '文件已存在（已更新元数据）',
                 }
             
             if progress_callback:
@@ -899,6 +915,9 @@ class NeteaseDownloader(BaseDownloader):
                 'disc_number': str(song_info.get('disc_number', '1')),
                 'genre': '流行'
             }
+            
+            # 记录关键元数据字段
+            logger.info(f"🏷️ 元数据: 曲目={metadata['track_number']}, 总数={metadata['total_tracks']}, 专辑艺术家={metadata['album_artist']}")
             
             # 智能处理时间字段
             if song_release_date and len(song_release_date) > 4:

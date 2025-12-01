@@ -274,12 +274,12 @@ class MusicMetadataManager:
             
             if metadata.get('track_number'):
                 audio_file['TRACKNUMBER'] = str(metadata['track_number'])
-                logger.debug(f"  添加曲目编号: {metadata['track_number']}")
+                logger.info(f"  添加曲目编号: {metadata['track_number']}")
             
             if metadata.get('total_tracks'):
                 audio_file['TOTALTRACKS'] = str(metadata['total_tracks'])
                 audio_file['TRACKTOTAL'] = str(metadata['total_tracks'])
-                logger.debug(f"  添加总曲目数: {metadata['total_tracks']}")
+                logger.info(f"  添加总曲目数: {metadata['total_tracks']}")
             
             if metadata.get('genre'):
                 audio_file['GENRE'] = metadata['genre']

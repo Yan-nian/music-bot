@@ -21,6 +21,9 @@ mutagen>=1.47.0
 eyed3>=0.9.7
 tinytag>=1.10.0
 
+# 图片处理（封面压缩）
+Pillow>=10.0.0
+
 # 加密支持
 pycryptodome>=3.19.0
 

@@ -8,6 +8,7 @@
 import os
 import sys
 import logging
+import io
 from pathlib import Path
 from typing import Dict, Optional, Union
 import requests
@@ -482,17 +483,82 @@ class MusicMetadataManager:
                 # 仍然尝试使用图片数据
             
             image_data = response.content
+            original_size = len(image_data)
             
-            # 检查图片大小（限制为5MB）
-            if len(image_data) > 5 * 1024 * 1024:
-                logger.warning("⚠️ 专辑封面过大，跳过添加")
-                return None
+            # 检查图片大小，如果过大则尝试压缩
+            max_size = 3 * 1024 * 1024  # 3MB 作为嵌入封面的合理限制
+            if original_size > max_size:
+                logger.info(f"🖼️ 专辑封面较大 ({original_size / 1024 / 1024:.1f}MB)，尝试压缩...")
+                image_data = self._compress_image(image_data, max_size)
+                
+                if image_data is None:
+                    logger.warning("⚠️ 专辑封面压缩失败，跳过添加")
+                    return None
+                    
+                logger.info(f"✅ 封面压缩成功: {original_size / 1024:.0f}KB -> {len(image_data) / 1024:.0f}KB")
             
-            logger.debug(f"✅ 成功下载专辑封面: {len(image_data)} 字节")
+            logger.debug(f"✅ 成功获取专辑封面: {len(image_data)} 字节")
             return image_data
             
         except Exception as e:
             logger.warning(f"⚠️ 下载专辑封面失败: {e}")
+            return None
+    
+    def _compress_image(self, image_data: bytes, max_size: int) -> Optional[bytes]:
+        """压缩图片到指定大小以下
+        
+        Args:
+            image_data: 原始图片数据
+            max_size: 目标最大大小（字节）
+            
+        Returns:
+            压缩后的图片数据，失败返回 None
+        """
+        try:
+            from PIL import Image
+            
+            # 加载图片
+            img = Image.open(io.BytesIO(image_data))
+            
+            # 转换为 RGB 模式（如果是 RGBA 或其他模式）
+            if img.mode in ('RGBA', 'P'):
+                img = img.convert('RGB')
+            
+            # 获取原始尺寸
+            original_width, original_height = img.size
+            
+            # 尝试不同的质量和尺寸进行压缩
+            for quality in [85, 75, 60, 50, 40]:
+                for scale in [1.0, 0.8, 0.6, 0.5, 0.4]:
+                    # 缩放图片
+                    if scale < 1.0:
+                        new_width = int(original_width * scale)
+                        new_height = int(original_height * scale)
+                        # 限制最小尺寸为 500x500
+                        new_width = max(new_width, 500)
+                        new_height = max(new_height, 500)
+                        resized_img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                    else:
+                        resized_img = img
+                    
+                    # 压缩为 JPEG
+                    output = io.BytesIO()
+                    resized_img.save(output, format='JPEG', quality=quality, optimize=True)
+                    compressed_data = output.getvalue()
+                    
+                    if len(compressed_data) <= max_size:
+                        logger.debug(f"🖼️ 压缩参数: quality={quality}, scale={scale}, size={len(compressed_data)/1024:.0f}KB")
+                        return compressed_data
+            
+            # 如果所有尝试都失败，返回最后一次压缩的结果（可能仍然过大）
+            logger.warning(f"⚠️ 封面压缩后仍较大: {len(compressed_data)/1024:.0f}KB")
+            return compressed_data if len(compressed_data) < len(image_data) else None
+            
+        except ImportError:
+            logger.warning("⚠️ Pillow 库未安装，无法压缩图片")
+            return None
+        except Exception as e:
+            logger.warning(f"⚠️ 图片压缩失败: {e}")
             return None
     
     def get_file_metadata(self, file_path: Union[str, Path]) -> Optional[Dict[str, str]]:

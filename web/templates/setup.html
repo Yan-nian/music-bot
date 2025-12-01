@@ -313,6 +313,11 @@
                 <input type="text" id="code" placeholder="输入收到的验证码">
                 <small>请查看 Telegram 收到的验证码消息</small>
             </div>
+            <div class="form-group" id="passwordGroup" style="display: none;">
+                <label>两步验证密码</label>
+                <input type="password" id="password" placeholder="输入两步验证密码">
+                <small>您的账号启用了两步验证</small>
+            </div>
             <button class="btn btn-primary" id="btnConfirmCode" onclick="confirmCode()">
                 ✅ 确认验证码
             </button>
@@ -438,6 +443,7 @@
         // 确认验证码
         async function confirmCode() {
             const code = document.getElementById('code').value.trim();
+            const password = document.getElementById('password').value.trim();
 
             if (!code) {
                 showMessage('请输入验证码', 'error');
@@ -456,7 +462,8 @@
                         phone: tempData.phone,
                         code: code,
                         phone_code_hash: tempData.phone_code_hash,
-                        temp_session_string: tempData.temp_session_string
+                        temp_session_string: tempData.temp_session_string,
+                        password: password || null
                     })
                 });
 
@@ -467,6 +474,10 @@
                     document.getElementById('sessionString').value = result.session_string;
                     showMessage('Session 生成成功！', 'success');
                     goToStep(3);
+                } else if (result.need_2fa) {
+                    // 需要两步验证
+                    document.getElementById('passwordGroup').style.display = 'block';
+                    showMessage(result.error || '请输入两步验证密码', 'error');
                 } else {
                     showMessage(result.error || '验证失败', 'error');
                 }
@@ -483,7 +494,11 @@
                 const response = await fetch('/tg/save_session', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ session_string: tempData.session_string })
+                    body: JSON.stringify({ 
+                        session_string: tempData.session_string,
+                        api_id: tempData.api_id,
+                        api_hash: tempData.api_hash
+                    })
                 });
 
                 const result = await response.json();

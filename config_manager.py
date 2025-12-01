@@ -28,6 +28,15 @@ class ConfigManager:
         "telegram_allowed_users": "",
         "telegram_session_string": "",
         
+        # Telegram 通知配置
+        "telegram_notify_enabled": True,         # 是否启用 TG 通知
+        "telegram_notify_progress": True,        # 是否发送进度通知
+        "telegram_notify_complete": True,        # 是否发送完成通知
+        "telegram_notify_error": True,           # 是否发送错误通知
+        "telegram_progress_interval": 1.0,       # 进度更新间隔（秒）
+        "telegram_send_file": False,             # 是否发送文件到 Telegram
+        "telegram_file_size_limit": 50,          # 发送文件大小限制（MB）
+        
         # 代理配置
         "proxy_enabled": False,
         "proxy_host": "",
@@ -35,7 +44,7 @@ class ConfigManager:
         # 通用下载配置
         "download_path": "/downloads",
         "auto_download_enabled": True,
-        "send_to_telegram": False,  # 是否发送到 Telegram
+        "send_to_telegram": False,  # 是否发送到 Telegram（旧配置，保留兼容）
         
         # 网易云音乐配置
         "netease_enabled": True,

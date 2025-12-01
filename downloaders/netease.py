@@ -308,6 +308,109 @@ class NeteaseDownloader(BaseDownloader):
             logger.error(f"❌ 获取歌曲信息失败: {e}")
             return None
     
+    def get_songs_info_batch(self, song_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """批量获取歌曲详情（用于歌单下载时获取完整元数据）
+        
+        Args:
+            song_ids: 歌曲ID列表
+            
+        Returns:
+            Dict[song_id, song_info]: 歌曲ID到详情的映射
+        """
+        result = {}
+        
+        # 网易云 API 支持批量查询，每次最多 1000 首
+        batch_size = 500
+        
+        for i in range(0, len(song_ids), batch_size):
+            batch_ids = song_ids[i:i + batch_size]
+            
+            try:
+                url = f"{self.api_url}/api/song/detail"
+                ids_str = ','.join(batch_ids)
+                params = {'ids': f'[{ids_str}]'}
+                
+                logger.info(f"📝 批量获取歌曲详情: {len(batch_ids)} 首 (批次 {i // batch_size + 1})")
+                
+                response = self.session.get(url, params=params, timeout=30)
+                response.raise_for_status()
+                data = response.json()
+                
+                if data.get('code') == 200 and data.get('songs'):
+                    for song in data['songs']:
+                        song_id = str(song['id'])
+                        artists = song.get('artists', [])
+                        album = song.get('album', {})
+                        
+                        # 提取专辑艺术家（第一个艺术家作为专辑艺术家）
+                        album_artist = artists[0]['name'] if artists else '未知'
+                        
+                        result[song_id] = {
+                            'id': song_id,
+                            'name': song['name'],
+                            'artist': ', '.join([a['name'] for a in artists]) if artists else '未知',
+                            'album': album.get('name', '未知'),
+                            'album_id': album.get('id'),
+                            'album_artist': album_artist,
+                            'cover': album.get('picUrl', ''),
+                            'duration': song.get('duration', 0) // 1000,
+                            'publish_time': album.get('publishTime'),
+                        }
+                
+                time.sleep(0.3)  # 避免请求过快
+                
+            except Exception as e:
+                logger.error(f"❌ 批量获取歌曲详情失败: {e}")
+        
+        logger.info(f"✅ 批量获取完成: {len(result)}/{len(song_ids)} 首")
+        return result
+    
+    def get_album_track_info(self, album_id: str) -> Dict[str, Dict[str, Any]]:
+        """获取专辑曲目信息（用于获取正确的 track_number 和 total_tracks）
+        
+        Args:
+            album_id: 专辑ID
+            
+        Returns:
+            Dict[song_id, track_info]: 歌曲ID到曲目信息的映射
+        """
+        try:
+            url = f"{self.api_url}/api/album/{album_id}"
+            response = self.session.get(url, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get('code') == 200 and data.get('album'):
+                album_info = data['album']
+                songs = album_info.get('songs', [])
+                total_tracks = len(songs)
+                album_artist = album_info.get('artists', [{}])[0].get('name', '未知')
+                publish_time = album_info.get('publishTime')
+                
+                result = {}
+                for song in songs:
+                    song_id = str(song['id'])
+                    track_no = song.get('no', 0)
+                    if not track_no or track_no == 0:
+                        # 如果没有曲目号，根据位置推断
+                        track_no = songs.index(song) + 1
+                    
+                    result[song_id] = {
+                        'track_number': track_no,
+                        'total_tracks': total_tracks,
+                        'album_artist': album_artist,
+                        'disc_number': song.get('cd', '1') or '1',
+                        'publish_time': publish_time,
+                    }
+                
+                return result
+            
+            return {}
+            
+        except Exception as e:
+            logger.error(f"❌ 获取专辑曲目信息失败 (album_id={album_id}): {e}")
+            return {}
+    
     def get_song_url(self, song_id: str, quality: str = None) -> Optional[Dict[str, Any]]:
         """获取歌曲下载链接 - 使用官方 API"""
         try:
@@ -488,8 +591,12 @@ class NeteaseDownloader(BaseDownloader):
             logger.error(traceback.format_exc())
             return []
     
-    def get_playlist_songs(self, playlist_id: str) -> List[Dict[str, Any]]:
-        """获取歌单歌曲列表"""
+    def get_playlist_songs(self, playlist_id: str) -> tuple:
+        """获取歌单歌曲列表
+        
+        Returns:
+            tuple: (songs_list, playlist_name)
+        """
         try:
             url = f"{self.api_url}/api/playlist/detail"
             params = {
@@ -503,30 +610,85 @@ class NeteaseDownloader(BaseDownloader):
             
             if data.get('code') == 200 and data.get('result'):
                 playlist = data['result']
+                playlist_name = playlist.get('name', '未知歌单')
                 tracks = playlist.get('tracks', [])
                 
-                result = []
-                for i, song in enumerate(tracks, 1):
+                if not tracks:
+                    logger.warning(f"⚠️ 歌单 {playlist_name} 没有歌曲")
+                    return [], playlist_name
+                
+                # 收集所有歌曲ID和专辑ID
+                song_ids = [str(song['id']) for song in tracks]
+                album_ids = set()
+                
+                # 从 tracks 中提取基本信息和专辑ID
+                basic_info = {}
+                for song in tracks:
+                    song_id = str(song['id'])
                     artists = song.get('artists', []) or song.get('ar', [])
                     album = song.get('album', {}) or song.get('al', {})
+                    album_id = album.get('id')
                     
-                    result.append({
-                        'id': str(song['id']),
+                    if album_id:
+                        album_ids.add(str(album_id))
+                    
+                    # 提取专辑艺术家
+                    album_artist = artists[0]['name'] if artists else '未知'
+                    
+                    basic_info[song_id] = {
+                        'id': song_id,
                         'name': song['name'],
                         'artist': ', '.join([a['name'] for a in artists]) if artists else '未知',
                         'album': album.get('name', '未知'),
-                        'track_number': i,
+                        'album_id': album_id,
+                        'album_artist': album_artist,
                         'cover': album.get('picUrl', ''),
+                    }
+                
+                logger.info(f"📋 歌单 '{playlist_name}' 共 {len(tracks)} 首歌曲，涉及 {len(album_ids)} 张专辑")
+                
+                # 获取所有相关专辑的曲目信息
+                album_track_info = {}
+                logger.info(f"📝 正在获取专辑曲目信息...")
+                for album_id in album_ids:
+                    if album_id:
+                        track_info = self.get_album_track_info(album_id)
+                        album_track_info.update(track_info)
+                        time.sleep(0.2)  # 避免请求过快
+                
+                logger.info(f"✅ 获取到 {len(album_track_info)} 首歌曲的专辑曲目信息")
+                
+                # 构建完整的歌曲列表
+                result = []
+                for song_id in song_ids:
+                    song_data = basic_info.get(song_id, {})
+                    track_data = album_track_info.get(song_id, {})
+                    
+                    # 合并基本信息和曲目信息
+                    result.append({
+                        'id': song_id,
+                        'name': song_data.get('name', '未知'),
+                        'artist': song_data.get('artist', '未知'),
+                        'album': song_data.get('album', '未知'),
+                        'album_id': song_data.get('album_id'),
+                        'album_artist': track_data.get('album_artist') or song_data.get('album_artist', '未知'),
+                        'cover': song_data.get('cover', ''),
+                        'track_number': track_data.get('track_number', 1),
+                        'total_tracks': track_data.get('total_tracks', 1),
+                        'disc_number': track_data.get('disc_number', '1'),
+                        'publish_time': track_data.get('publish_time'),
                     })
                 
-                logger.info(f"✅ 获取歌单歌曲: {len(result)} 首")
-                return result
+                logger.info(f"✅ 歌单歌曲列表构建完成: {len(result)} 首")
+                return result, playlist_name
             
-            return []
+            return [], '未知歌单'
             
         except Exception as e:
             logger.error(f"❌ 获取歌单歌曲失败: {e}")
-            return []
+            import traceback
+            logger.error(traceback.format_exc())
+            return [], '未知歌单'
 
     # ============ 下载功能 ============
     
@@ -727,7 +889,7 @@ class NeteaseDownloader(BaseDownloader):
                          quality: str = None,
                          progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
         """下载歌单"""
-        songs = self.get_playlist_songs(playlist_id)
+        songs, playlist_name = self.get_playlist_songs(playlist_id)
         
         if not songs:
             return {'success': False, 'error': '无法获取歌单歌曲'}
@@ -735,7 +897,7 @@ class NeteaseDownloader(BaseDownloader):
         results = {
             'success': True,
             'playlist_id': playlist_id,
-            'playlist_title': '歌单',  # 如有歌单名称可在此获取
+            'playlist_title': playlist_name,
             'total_songs': len(songs),
             'downloaded_songs': 0,
             'songs': [],
@@ -751,8 +913,17 @@ class NeteaseDownloader(BaseDownloader):
                     'current': i,
                     'total': len(songs),
                     'song': song['name'],
-                    'playlist': results['playlist_title'],
+                    'playlist': playlist_name,
                 })
+            
+            # 构建额外元数据（从歌单获取的完整专辑信息）
+            extra_metadata = {
+                'track_number': song.get('track_number', 1),
+                'total_tracks': song.get('total_tracks', 1),
+                'album_artist': song.get('album_artist', song.get('artist', '未知')),
+                'disc_number': song.get('disc_number', '1'),
+                'publish_time': song.get('publish_time'),
+            }
             
             # 创建包装的进度回调，添加歌单进度信息
             def make_playlist_progress_callback(song_index, total_songs, song_name, playlist_title):
@@ -769,8 +940,8 @@ class NeteaseDownloader(BaseDownloader):
                         progress_callback(progress_info)
                 return wrapped_callback
             
-            playlist_callback = make_playlist_progress_callback(i, len(songs), song['name'], results['playlist_title'])
-            result = self.download_song(song['id'], download_dir, quality, playlist_callback)
+            playlist_callback = make_playlist_progress_callback(i, len(songs), song['name'], playlist_name)
+            result = self.download_song(song['id'], download_dir, quality, playlist_callback, extra_metadata)
             results['songs'].append(result)
             
             if result.get('success'):
@@ -784,6 +955,144 @@ class NeteaseDownloader(BaseDownloader):
             time.sleep(0.5)
         
         return results
+    
+    def download_playlist_incremental(self, playlist_id: str, download_dir: str,
+                                      quality: str = None,
+                                      progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
+        """增量下载歌单（只下载新增歌曲）
+        
+        Args:
+            playlist_id: 歌单ID
+            download_dir: 下载目录
+            quality: 音质
+            progress_callback: 进度回调
+            
+        Returns:
+            下载结果字典，包含新增歌曲数、下载数等信息
+        """
+        logger.info(f"🔄 开始增量检查歌单: {playlist_id}")
+        
+        # 获取歌单当前所有歌曲
+        songs, playlist_name = self.get_playlist_songs(playlist_id)
+        
+        if not songs:
+            return {'success': False, 'error': '无法获取歌单歌曲'}
+        
+        # 获取已下载的歌曲ID（从配置管理器）
+        downloaded_song_ids = set()
+        if self.config_manager:
+            downloaded_records = self.config_manager.get_playlist_songs(playlist_id, downloaded_only=True)
+            downloaded_song_ids = {record['song_id'] for record in downloaded_records}
+        
+        # 找出新增歌曲
+        new_songs = []
+        for song in songs:
+            song_id = song['id']
+            if song_id not in downloaded_song_ids:
+                new_songs.append(song)
+                # 记录到数据库（标记为未下载）
+                if self.config_manager:
+                    self.config_manager.add_playlist_song(
+                        playlist_id=playlist_id,
+                        song_id=song_id,
+                        song_name=song.get('name'),
+                        artist=song.get('artist'),
+                        album=song.get('album'),
+                        downloaded=False
+                    )
+        
+        logger.info(f"📋 歌单 '{playlist_name}' 共 {len(songs)} 首，新增 {len(new_songs)} 首")
+        
+        results = {
+            'success': True,
+            'playlist_id': playlist_id,
+            'playlist_title': playlist_name,
+            'total_songs': len(songs),
+            'new_songs': len(new_songs),
+            'downloaded_songs': 0,
+            'skipped_songs': len(songs) - len(new_songs),
+            'songs': [],
+            'quality_name': self.quality,
+            'bitrate': '未知',
+            'file_format': 'MP3',
+        }
+        
+        if not new_songs:
+            logger.info(f"✅ 歌单 '{playlist_name}' 没有新增歌曲")
+            results['message'] = '没有新增歌曲'
+            return results
+        
+        # 下载新增歌曲
+        for i, song in enumerate(new_songs, 1):
+            if progress_callback:
+                progress_callback({
+                    'status': 'playlist_progress',
+                    'current': i,
+                    'total': len(new_songs),
+                    'song': song['name'],
+                    'playlist': playlist_name,
+                    'is_incremental': True,
+                })
+            
+            # 构建额外元数据
+            extra_metadata = {
+                'track_number': song.get('track_number', 1),
+                'total_tracks': song.get('total_tracks', 1),
+                'album_artist': song.get('album_artist', song.get('artist', '未知')),
+                'disc_number': song.get('disc_number', '1'),
+                'publish_time': song.get('publish_time'),
+            }
+            
+            # 创建包装的进度回调
+            def make_incremental_callback(song_index, total_songs, song_name, playlist_title):
+                def wrapped_callback(progress_info):
+                    if progress_callback:
+                        if progress_info.get('status') == 'file_progress':
+                            progress_info['playlist_context'] = {
+                                'current': song_index,
+                                'total': total_songs,
+                                'song': song_name,
+                                'playlist': playlist_title,
+                                'is_incremental': True,
+                            }
+                        progress_callback(progress_info)
+                return wrapped_callback
+            
+            incremental_callback = make_incremental_callback(i, len(new_songs), song['name'], playlist_name)
+            result = self.download_song(song['id'], download_dir, quality, incremental_callback, extra_metadata)
+            results['songs'].append(result)
+            
+            if result.get('success'):
+                results['downloaded_songs'] += 1
+                # 标记歌曲已下载
+                if self.config_manager:
+                    self.config_manager.mark_song_downloaded(playlist_id, song['id'])
+                
+                # 更新码率和格式信息
+                if result.get('bitrate') and results.get('bitrate') == '未知':
+                    results['bitrate'] = result.get('bitrate')
+                if result.get('file_format'):
+                    results['file_format'] = result.get('file_format')
+            
+            time.sleep(0.5)
+        
+        # 更新歌单统计
+        if self.config_manager:
+            self.config_manager.update_subscribed_playlist(
+                playlist_id=playlist_id,
+                last_check_time=time.strftime('%Y-%m-%d %H:%M:%S'),
+                last_song_count=len(songs),
+                total_downloaded=results['downloaded_songs'] + results['skipped_songs']
+            )
+        
+        logger.info(f"✅ 歌单 '{playlist_name}' 增量下载完成: {results['downloaded_songs']}/{len(new_songs)}")
+        return results
+    
+    def sync_playlist(self, playlist_id: str, download_dir: str,
+                     quality: str = None,
+                     progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
+        """同步歌单（检查并下载新歌曲的别名方法）"""
+        return self.download_playlist_incremental(playlist_id, download_dir, quality, progress_callback)
     
     def _get_quality_name(self, bitrate: int) -> str:
         """根据码率返回音质名称"""

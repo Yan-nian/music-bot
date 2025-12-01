@@ -428,6 +428,130 @@ class MusicBot:
         allowed_ids = [int(uid.strip()) for uid in allowed_users.split(',') if uid.strip()]
         return user_id in allowed_ids
     
+    async def _playlist_sync_loop(self):
+        """歌单定时同步循环"""
+        logger.info("📋 歌单定时同步服务已启动")
+        
+        # 首次启动等待 60 秒再开始检查
+        await asyncio.sleep(60)
+        
+        while True:
+            try:
+                # 获取所有启用的订阅歌单
+                playlists = self.config_manager.get_subscribed_playlists()
+                
+                for playlist in playlists:
+                    if not playlist.get('enabled', True):
+                        continue
+                    
+                    if not playlist.get('auto_download', False):
+                        continue
+                    
+                    # 检查是否到了同步时间
+                    last_check = playlist.get('last_check_time')
+                    check_interval = playlist.get('check_interval', 3600)  # 默认1小时
+                    
+                    should_sync = False
+                    if last_check is None:
+                        should_sync = True
+                    else:
+                        from datetime import datetime
+                        try:
+                            last_check_time = datetime.fromisoformat(last_check)
+                            elapsed = (datetime.now() - last_check_time).total_seconds()
+                            if elapsed >= check_interval:
+                                should_sync = True
+                        except Exception:
+                            should_sync = True
+                    
+                    if should_sync:
+                        await self._sync_single_playlist(playlist)
+                
+            except Exception as e:
+                logger.error(f"❌ 歌单同步循环出错: {e}")
+            
+            # 每分钟检查一次
+            await asyncio.sleep(60)
+    
+    async def _sync_single_playlist(self, playlist: dict):
+        """同步单个歌单"""
+        platform = playlist.get('platform', 'netease')
+        playlist_id = playlist.get('playlist_id')
+        playlist_name = playlist.get('playlist_name', playlist_id)
+        
+        logger.info(f"🔄 开始同步歌单: {playlist_name} ({playlist_id})")
+        
+        try:
+            if platform == 'netease':
+                downloader = self.downloaders.get('netease')
+                if not downloader:
+                    logger.warning(f"⚠️ 网易云下载器未启用，跳过歌单 {playlist_name}")
+                    return
+                
+                # 在线程池中执行同步（因为下载是同步操作）
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: downloader.sync_playlist(playlist_id, self.config_manager)
+                )
+                
+                if result:
+                    new_count = result.get('new_songs', 0)
+                    downloaded = result.get('downloaded', 0)
+                    failed = result.get('failed', 0)
+                    
+                    if new_count > 0:
+                        logger.info(f"✅ 歌单 {playlist_name} 同步完成: 新增 {new_count} 首，成功 {downloaded}，失败 {failed}")
+                        
+                        # 发送 Telegram 通知
+                        await self._send_playlist_sync_notification(playlist_name, new_count, downloaded, failed)
+                    else:
+                        logger.info(f"✅ 歌单 {playlist_name} 已是最新，无新歌曲")
+                else:
+                    logger.warning(f"⚠️ 歌单 {playlist_name} 同步失败")
+            else:
+                logger.warning(f"⚠️ 暂不支持 {platform} 平台的歌单同步")
+                
+        except Exception as e:
+            logger.error(f"❌ 同步歌单 {playlist_name} 出错: {e}")
+    
+    async def _send_playlist_sync_notification(self, playlist_name: str, new_count: int, downloaded: int, failed: int):
+        """发送歌单同步通知"""
+        try:
+            if not self.app or not self.app.bot:
+                return
+            
+            # 获取允许的用户列表
+            allowed_users = self.config.get('telegram_allowed_users', '')
+            if not allowed_users:
+                return
+            
+            message = (
+                f"📋 **歌单同步完成**\n\n"
+                f"📁 歌单: {playlist_name}\n"
+                f"🆕 新增: {new_count} 首\n"
+                f"✅ 成功下载: {downloaded} 首\n"
+            )
+            
+            if failed > 0:
+                message += f"❌ 下载失败: {failed} 首\n"
+            
+            # 向所有配置的用户发送通知
+            for user_id in allowed_users.split(','):
+                user_id = user_id.strip()
+                if user_id:
+                    try:
+                        await self.app.bot.send_message(
+                            chat_id=int(user_id),
+                            text=message,
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                    except Exception as e:
+                        logger.debug(f"发送通知给用户 {user_id} 失败: {e}")
+                        
+        except Exception as e:
+            logger.debug(f"发送歌单同步通知失败: {e}")
+    
     async def run_bot(self):
         """运行 Telegram Bot"""
         if not TELEGRAM_AVAILABLE:
@@ -499,6 +623,10 @@ class MusicBot:
         
         logger.info("✅ Telegram Bot 已启动")
         
+        # 启动定时同步歌单任务
+        sync_task = asyncio.create_task(self._playlist_sync_loop())
+        logger.info("✅ 歌单定时同步任务已启动")
+        
         # 保持运行
         try:
             while True:
@@ -506,6 +634,11 @@ class MusicBot:
         except asyncio.CancelledError:
             pass
         finally:
+            sync_task.cancel()
+            try:
+                await sync_task
+            except asyncio.CancelledError:
+                pass
             await self.app.updater.stop()
             await self.app.stop()
             await self.app.shutdown()

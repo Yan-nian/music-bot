@@ -155,6 +155,42 @@ class ConfigManager:
                     )
                 ''')
                 
+                # 创建订阅歌单表（用于增量更新）
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS subscribed_playlists (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        platform TEXT NOT NULL DEFAULT 'netease',
+                        playlist_id TEXT NOT NULL,
+                        playlist_name TEXT,
+                        playlist_url TEXT,
+                        auto_download BOOLEAN DEFAULT 1,
+                        check_interval INTEGER DEFAULT 3600,
+                        last_check_time TIMESTAMP,
+                        last_song_count INTEGER DEFAULT 0,
+                        total_downloaded INTEGER DEFAULT 0,
+                        enabled BOOLEAN DEFAULT 1,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(platform, playlist_id)
+                    )
+                ''')
+                
+                # 创建歌单歌曲记录表（记录已下载的歌曲）
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS playlist_songs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        playlist_id TEXT NOT NULL,
+                        song_id TEXT NOT NULL,
+                        song_name TEXT,
+                        artist TEXT,
+                        album TEXT,
+                        downloaded BOOLEAN DEFAULT 0,
+                        download_time TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(playlist_id, song_id)
+                    )
+                ''')
+                
                 conn.commit()
                 logger.info(f"✅ 配置数据库初始化成功: {self.db_path}")
                 
@@ -401,6 +437,252 @@ class ConfigManager:
         except json.JSONDecodeError as e:
             logger.error(f"❌ JSON 解析失败: {e}")
             return False
+    
+    # ==================== 订阅歌单管理 ====================
+    
+    def add_subscribed_playlist(self, playlist_id: str, playlist_name: str = None,
+                                playlist_url: str = None, platform: str = 'netease',
+                                check_interval: int = 3600) -> bool:
+        """添加订阅歌单"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO subscribed_playlists 
+                    (platform, playlist_id, playlist_name, playlist_url, check_interval)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(platform, playlist_id) DO UPDATE SET 
+                        playlist_name = COALESCE(?, playlist_name),
+                        playlist_url = COALESCE(?, playlist_url),
+                        check_interval = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                """, (platform, playlist_id, playlist_name, playlist_url, check_interval,
+                      playlist_name, playlist_url, check_interval))
+                conn.commit()
+                logger.info(f"✅ 添加订阅歌单: {playlist_name or playlist_id}")
+                return True
+        except Exception as e:
+            logger.error(f"❌ 添加订阅歌单失败: {e}")
+            return False
+    
+    def remove_subscribed_playlist(self, playlist_id: str, platform: str = 'netease') -> bool:
+        """移除订阅歌单"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    DELETE FROM subscribed_playlists 
+                    WHERE platform = ? AND playlist_id = ?
+                """, (platform, playlist_id))
+                # 同时删除该歌单的歌曲记录
+                cursor.execute("""
+                    DELETE FROM playlist_songs WHERE playlist_id = ?
+                """, (playlist_id,))
+                conn.commit()
+                logger.info(f"✅ 移除订阅歌单: {playlist_id}")
+                return True
+        except Exception as e:
+            logger.error(f"❌ 移除订阅歌单失败: {e}")
+            return False
+    
+    def get_subscribed_playlists(self, platform: str = None, enabled_only: bool = False) -> List[Dict[str, Any]]:
+        """获取订阅歌单列表"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                query = "SELECT * FROM subscribed_playlists WHERE 1=1"
+                params = []
+                
+                if platform:
+                    query += " AND platform = ?"
+                    params.append(platform)
+                
+                if enabled_only:
+                    query += " AND enabled = 1"
+                
+                query += " ORDER BY created_at DESC"
+                
+                cursor.execute(query, params)
+                columns = [description[0] for description in cursor.description]
+                rows = cursor.fetchall()
+                
+                return [dict(zip(columns, row)) for row in rows]
+        except Exception as e:
+            logger.error(f"❌ 获取订阅歌单失败: {e}")
+            return []
+    
+    def get_subscribed_playlist(self, playlist_id: str, platform: str = 'netease') -> Optional[Dict[str, Any]]:
+        """获取单个订阅歌单信息"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT * FROM subscribed_playlists 
+                    WHERE platform = ? AND playlist_id = ?
+                """, (platform, playlist_id))
+                
+                row = cursor.fetchone()
+                if row:
+                    columns = [description[0] for description in cursor.description]
+                    return dict(zip(columns, row))
+                return None
+        except Exception as e:
+            logger.error(f"❌ 获取订阅歌单失败: {e}")
+            return None
+    
+    def update_subscribed_playlist(self, playlist_id: str, platform: str = 'netease', **kwargs) -> bool:
+        """更新订阅歌单信息"""
+        try:
+            allowed_fields = ['playlist_name', 'auto_download', 'check_interval', 
+                             'last_check_time', 'last_song_count', 'total_downloaded', 'enabled']
+            
+            updates = []
+            values = []
+            for key, value in kwargs.items():
+                if key in allowed_fields:
+                    updates.append(f"{key} = ?")
+                    values.append(value)
+            
+            if not updates:
+                return False
+            
+            values.extend([platform, playlist_id])
+            
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(f"""
+                    UPDATE subscribed_playlists 
+                    SET {', '.join(updates)}, updated_at = CURRENT_TIMESTAMP
+                    WHERE platform = ? AND playlist_id = ?
+                """, values)
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"❌ 更新订阅歌单失败: {e}")
+            return False
+    
+    def add_playlist_song(self, playlist_id: str, song_id: str, song_name: str = None,
+                         artist: str = None, album: str = None, downloaded: bool = False) -> bool:
+        """添加歌单歌曲记录"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                download_time = datetime.now().isoformat() if downloaded else None
+                cursor.execute("""
+                    INSERT INTO playlist_songs 
+                    (playlist_id, song_id, song_name, artist, album, downloaded, download_time)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(playlist_id, song_id) DO UPDATE SET
+                        song_name = COALESCE(?, song_name),
+                        artist = COALESCE(?, artist),
+                        album = COALESCE(?, album),
+                        downloaded = ?,
+                        download_time = CASE WHEN ? THEN COALESCE(download_time, CURRENT_TIMESTAMP) ELSE download_time END
+                """, (playlist_id, song_id, song_name, artist, album, downloaded, download_time,
+                      song_name, artist, album, downloaded, downloaded))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"❌ 添加歌单歌曲记录失败: {e}")
+            return False
+    
+    def get_playlist_songs(self, playlist_id: str, downloaded_only: bool = False) -> List[Dict[str, Any]]:
+        """获取歌单中的歌曲记录"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                query = "SELECT * FROM playlist_songs WHERE playlist_id = ?"
+                params = [playlist_id]
+                
+                if downloaded_only:
+                    query += " AND downloaded = 1"
+                
+                query += " ORDER BY created_at"
+                
+                cursor.execute(query, params)
+                columns = [description[0] for description in cursor.description]
+                rows = cursor.fetchall()
+                
+                return [dict(zip(columns, row)) for row in rows]
+        except Exception as e:
+            logger.error(f"❌ 获取歌单歌曲失败: {e}")
+            return []
+    
+    def get_undownloaded_songs(self, playlist_id: str) -> List[Dict[str, Any]]:
+        """获取歌单中未下载的歌曲"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT * FROM playlist_songs 
+                    WHERE playlist_id = ? AND downloaded = 0
+                    ORDER BY created_at
+                """, (playlist_id,))
+                
+                columns = [description[0] for description in cursor.description]
+                rows = cursor.fetchall()
+                
+                return [dict(zip(columns, row)) for row in rows]
+        except Exception as e:
+            logger.error(f"❌ 获取未下载歌曲失败: {e}")
+            return []
+    
+    def mark_song_downloaded(self, playlist_id: str, song_id: str) -> bool:
+        """标记歌曲已下载"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE playlist_songs 
+                    SET downloaded = 1, download_time = CURRENT_TIMESTAMP
+                    WHERE playlist_id = ? AND song_id = ?
+                """, (playlist_id, song_id))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"❌ 标记歌曲已下载失败: {e}")
+            return False
+    
+    def is_song_downloaded(self, playlist_id: str, song_id: str) -> bool:
+        """检查歌曲是否已下载"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT downloaded FROM playlist_songs 
+                    WHERE playlist_id = ? AND song_id = ?
+                """, (playlist_id, song_id))
+                
+                row = cursor.fetchone()
+                return bool(row and row[0])
+        except Exception as e:
+            logger.error(f"❌ 检查歌曲下载状态失败: {e}")
+            return False
+    
+    def get_playlist_stats(self, playlist_id: str) -> Dict[str, int]:
+        """获取歌单统计信息"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT 
+                        COUNT(*) as total,
+                        SUM(CASE WHEN downloaded = 1 THEN 1 ELSE 0 END) as downloaded
+                    FROM playlist_songs WHERE playlist_id = ?
+                """, (playlist_id,))
+                
+                row = cursor.fetchone()
+                return {
+                    'total': row[0] or 0,
+                    'downloaded': row[1] or 0,
+                    'pending': (row[0] or 0) - (row[1] or 0)
+                }
+        except Exception as e:
+            logger.error(f"❌ 获取歌单统计失败: {e}")
+            return {'total': 0, 'downloaded': 0, 'pending': 0}
 
 
 # 全局配置管理器实例

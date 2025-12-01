@@ -413,6 +413,322 @@ def get_status():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# ==================== 订阅歌单 API ====================
+
+@app.route('/api/playlists', methods=['GET'])
+@login_required
+def get_playlists():
+    """获取所有订阅歌单"""
+    try:
+        platform = request.args.get('platform', None)
+        enabled_only = request.args.get('enabled_only', 'false').lower() == 'true'
+        
+        playlists = config_manager.get_subscribed_playlists(platform=platform, enabled_only=enabled_only)
+        
+        # 为每个歌单添加统计信息
+        for playlist in playlists:
+            stats = config_manager.get_playlist_stats(playlist['playlist_id'])
+            playlist['stats'] = stats
+        
+        return jsonify({
+            'success': True,
+            'data': playlists
+        })
+    except Exception as e:
+        logger.error(f"获取订阅歌单失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/playlists', methods=['POST'])
+@login_required
+def add_playlist():
+    """添加订阅歌单"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': '无效的请求数据'}), 400
+        
+        # 支持直接传入歌单URL或ID
+        playlist_url = data.get('playlist_url', '').strip()
+        playlist_id = data.get('playlist_id', '').strip()
+        playlist_name = data.get('playlist_name', '').strip()
+        platform = data.get('platform', 'netease')
+        check_interval = data.get('check_interval', 3600)
+        
+        # 从URL提取歌单ID
+        if playlist_url and not playlist_id:
+            import re
+            # 支持多种网易云歌单URL格式
+            patterns = [
+                r'playlist\?id=(\d+)',
+                r'playlist/(\d+)',
+                r'#/playlist\?id=(\d+)',
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, playlist_url)
+                if match:
+                    playlist_id = match.group(1)
+                    break
+        
+        if not playlist_id:
+            return jsonify({'success': False, 'error': '请提供有效的歌单ID或URL'}), 400
+        
+        # 如果没有提供歌单名称，尝试获取
+        if not playlist_name:
+            try:
+                from downloaders.netease import NeteaseDownloader
+                downloader = NeteaseDownloader(config_manager)
+                songs, fetched_name = downloader.get_playlist_songs(playlist_id)
+                if fetched_name and fetched_name != '未知歌单':
+                    playlist_name = fetched_name
+                else:
+                    playlist_name = f'歌单 {playlist_id}'
+            except Exception as e:
+                logger.warning(f"获取歌单名称失败: {e}")
+                playlist_name = f'歌单 {playlist_id}'
+        
+        # 构建完整URL
+        if not playlist_url:
+            playlist_url = f'https://music.163.com/#/playlist?id={playlist_id}'
+        
+        if config_manager.add_subscribed_playlist(
+            playlist_id=playlist_id,
+            playlist_name=playlist_name,
+            playlist_url=playlist_url,
+            platform=platform,
+            check_interval=check_interval
+        ):
+            return jsonify({
+                'success': True,
+                'message': f'成功添加歌单: {playlist_name}',
+                'data': {
+                    'playlist_id': playlist_id,
+                    'playlist_name': playlist_name
+                }
+            })
+        else:
+            return jsonify({'success': False, 'error': '添加歌单失败'}), 500
+            
+    except Exception as e:
+        logger.error(f"添加订阅歌单失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/playlists/<playlist_id>', methods=['GET'])
+@login_required
+def get_playlist(playlist_id: str):
+    """获取单个歌单详情"""
+    try:
+        platform = request.args.get('platform', 'netease')
+        playlist = config_manager.get_subscribed_playlist(playlist_id, platform)
+        
+        if not playlist:
+            return jsonify({'success': False, 'error': '歌单不存在'}), 404
+        
+        # 添加统计信息
+        playlist['stats'] = config_manager.get_playlist_stats(playlist_id)
+        
+        # 获取歌曲列表
+        playlist['songs'] = config_manager.get_playlist_songs(playlist_id)
+        
+        return jsonify({
+            'success': True,
+            'data': playlist
+        })
+    except Exception as e:
+        logger.error(f"获取歌单详情失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/playlists/<playlist_id>', methods=['PUT'])
+@login_required
+def update_playlist(playlist_id: str):
+    """更新歌单设置"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': '无效的请求数据'}), 400
+        
+        platform = data.pop('platform', 'netease')
+        
+        if config_manager.update_subscribed_playlist(playlist_id, platform, **data):
+            return jsonify({
+                'success': True,
+                'message': '歌单设置已更新'
+            })
+        else:
+            return jsonify({'success': False, 'error': '更新失败'}), 500
+            
+    except Exception as e:
+        logger.error(f"更新歌单设置失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/playlists/<playlist_id>', methods=['DELETE'])
+@login_required
+def delete_playlist(playlist_id: str):
+    """删除订阅歌单"""
+    try:
+        platform = request.args.get('platform', 'netease')
+        
+        if config_manager.remove_subscribed_playlist(playlist_id, platform):
+            return jsonify({
+                'success': True,
+                'message': '歌单已删除'
+            })
+        else:
+            return jsonify({'success': False, 'error': '删除失败'}), 500
+            
+    except Exception as e:
+        logger.error(f"删除歌单失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/playlists/<playlist_id>/sync', methods=['POST'])
+@login_required
+def sync_playlist(playlist_id: str):
+    """同步歌单（增量下载）"""
+    try:
+        platform = request.args.get('platform', 'netease')
+        
+        # 检查歌单是否存在
+        playlist = config_manager.get_subscribed_playlist(playlist_id, platform)
+        if not playlist:
+            return jsonify({'success': False, 'error': '歌单不存在'}), 404
+        
+        # 获取下载目录
+        download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
+        
+        # 创建下载器并执行增量下载
+        from downloaders.netease import NeteaseDownloader
+        downloader = NeteaseDownloader(config_manager)
+        
+        result = downloader.download_playlist_incremental(
+            playlist_id=playlist_id,
+            download_dir=download_dir
+        )
+        
+        return jsonify({
+            'success': result.get('success', False),
+            'data': result
+        })
+        
+    except Exception as e:
+        logger.error(f"同步歌单失败: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/playlists/<playlist_id>/check', methods=['POST'])
+@login_required
+def check_playlist_updates(playlist_id: str):
+    """检查歌单更新（不下载，仅检查新歌曲）"""
+    try:
+        platform = request.args.get('platform', 'netease')
+        
+        # 创建下载器获取歌单信息
+        from downloaders.netease import NeteaseDownloader
+        downloader = NeteaseDownloader(config_manager)
+        
+        songs, playlist_name = downloader.get_playlist_songs(playlist_id)
+        
+        if not songs:
+            return jsonify({'success': False, 'error': '无法获取歌单信息'}), 500
+        
+        # 获取已下载的歌曲
+        downloaded_records = config_manager.get_playlist_songs(playlist_id, downloaded_only=True)
+        downloaded_ids = {record['song_id'] for record in downloaded_records}
+        
+        # 统计新歌曲
+        new_songs = [s for s in songs if s['id'] not in downloaded_ids]
+        
+        # 更新歌单信息
+        config_manager.update_subscribed_playlist(
+            playlist_id=playlist_id,
+            playlist_name=playlist_name,
+            last_check_time=None,  # 只检查不更新时间
+            last_song_count=len(songs)
+        )
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'playlist_name': playlist_name,
+                'total_songs': len(songs),
+                'downloaded_songs': len(downloaded_ids),
+                'new_songs': len(new_songs),
+                'new_song_list': [{'id': s['id'], 'name': s['name'], 'artist': s['artist']} for s in new_songs[:20]]  # 只返回前20首
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"检查歌单更新失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/playlists/sync-all', methods=['POST'])
+@login_required
+def sync_all_playlists():
+    """同步所有启用的歌单"""
+    try:
+        playlists = config_manager.get_subscribed_playlists(enabled_only=True)
+        
+        if not playlists:
+            return jsonify({
+                'success': True,
+                'message': '没有启用的订阅歌单',
+                'data': {'total': 0, 'synced': 0}
+            })
+        
+        download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
+        
+        from downloaders.netease import NeteaseDownloader
+        downloader = NeteaseDownloader(config_manager)
+        
+        results = []
+        total_new_songs = 0
+        total_downloaded = 0
+        
+        for playlist in playlists:
+            try:
+                result = downloader.download_playlist_incremental(
+                    playlist_id=playlist['playlist_id'],
+                    download_dir=download_dir
+                )
+                results.append({
+                    'playlist_id': playlist['playlist_id'],
+                    'playlist_name': playlist['playlist_name'],
+                    'success': result.get('success', False),
+                    'new_songs': result.get('new_songs', 0),
+                    'downloaded': result.get('downloaded_songs', 0)
+                })
+                total_new_songs += result.get('new_songs', 0)
+                total_downloaded += result.get('downloaded_songs', 0)
+            except Exception as e:
+                logger.error(f"同步歌单 {playlist['playlist_id']} 失败: {e}")
+                results.append({
+                    'playlist_id': playlist['playlist_id'],
+                    'playlist_name': playlist['playlist_name'],
+                    'success': False,
+                    'error': str(e)
+                })
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'total': len(playlists),
+                'results': results,
+                'total_new_songs': total_new_songs,
+                'total_downloaded': total_downloaded
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"同步所有歌单失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # ==================== 页面路由 ====================
 
 @app.route('/login')
@@ -464,6 +780,13 @@ def setup():
 def account():
     """账号管理页面"""
     return render_template('account.html')
+
+
+@app.route('/playlists')
+@login_required
+def playlists():
+    """歌单订阅管理页面"""
+    return render_template('playlists.html')
 
 
 # ==================== 静态文件 ====================

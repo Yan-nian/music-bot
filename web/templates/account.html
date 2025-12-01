@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Bot - 账号管理</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #f5f5f7;
+            --card-bg: rgba(255, 255, 255, 0.95);
+            --text-primary: #1d1d1f;
+            --text-secondary: #86868b;
+            --accent: #007AFF;
+            --accent-hover: #0056b3;
+            --success: #34c759;
+            --danger: #ff3b30;
+            --warning: #ff9500;
+            --border: rgba(0, 0, 0, 0.1);
+            --shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-color);
+            min-height: 100vh;
+            color: var(--text-primary);
+        }
+
+        .header {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            padding: 20px 32px;
+            box-shadow: var(--shadow);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header-content {
+            max-width: 800px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 12px;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-decoration: none;
+        }
+
+        .btn-secondary {
+            background: var(--bg-color);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            background: #e8e8ed;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent) 0%, #5856d6 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px rgba(0, 122, 255, 0.3);
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #e6342a;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 32px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border-radius: 20px;
+            padding: 32px;
+            box-shadow: var(--shadow);
+            margin-bottom: 24px;
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .card-header .icon {
+            font-size: 1.5rem;
+        }
+
+        .card-header h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .card-header p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-top: 4px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 14px 16px;
+            font-size: 1rem;
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.8);
+            color: var(--text-primary);
+            transition: all 0.2s ease;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.15);
+        }
+
+        .form-group input::placeholder {
+            color: var(--text-secondary);
+        }
+
+        .form-group input:disabled {
+            background: #f0f0f0;
+            cursor: not-allowed;
+        }
+
+        .form-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 16px;
+            color: white;
+            margin-bottom: 24px;
+        }
+
+        .user-avatar {
+            width: 64px;
+            height: 64px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+        }
+
+        .user-details h3 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .user-details p {
+            opacity: 0.8;
+            font-size: 0.9rem;
+        }
+
+        /* Toast 通知 */
+        .toast {
+            position: fixed;
+            top: 24px;
+            right: 24px;
+            padding: 16px 24px;
+            border-radius: 12px;
+            background: var(--card-bg);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            transform: translateX(120%);
+            transition: transform 0.3s ease;
+            z-index: 1000;
+        }
+
+        .toast.show {
+            transform: translateX(0);
+        }
+
+        .toast.success {
+            border-left: 4px solid var(--success);
+        }
+
+        .toast.error {
+            border-left: 4px solid var(--danger);
+        }
+
+        .toast.warning {
+            border-left: 4px solid var(--warning);
+        }
+
+        .password-strength {
+            margin-top: 8px;
+            height: 4px;
+            border-radius: 2px;
+            background: var(--border);
+            overflow: hidden;
+        }
+
+        .password-strength-bar {
+            height: 100%;
+            width: 0%;
+            transition: all 0.3s ease;
+        }
+
+        .password-strength-bar.weak {
+            width: 33%;
+            background: var(--danger);
+        }
+
+        .password-strength-bar.medium {
+            width: 66%;
+            background: var(--warning);
+        }
+
+        .password-strength-bar.strong {
+            width: 100%;
+            background: var(--success);
+        }
+
+        .password-hint {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        /* 响应式 */
+        @media (max-width: 640px) {
+            .container {
+                padding: 16px;
+            }
+
+            .card {
+                padding: 24px;
+            }
+
+            .header {
+                padding: 16px;
+            }
+
+            .header h1 {
+                font-size: 1.25rem;
+            }
+
+            .form-actions {
+                flex-direction: column;
+            }
+
+            .btn {
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="toast" id="toast">
+        <span class="toast-icon"></span>
+        <span class="toast-message"></span>
+    </div>
+
+    <header class="header">
+        <div class="header-content">
+            <h1>🔐 账号管理</h1>
+            <div class="header-actions">
+                <a href="/" class="btn btn-secondary">← 返回首页</a>
+                <button class="btn btn-danger" onclick="handleLogout()">🚪 退出登录</button>
+            </div>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- 用户信息卡片 -->
+        <div class="user-info">
+            <div class="user-avatar">👤</div>
+            <div class="user-details">
+                <h3 id="displayUsername">加载中...</h3>
+                <p>管理员账号</p>
+            </div>
+        </div>
+
+        <!-- 修改用户名 -->
+        <div class="card">
+            <div class="card-header">
+                <span class="icon">✏️</span>
+                <div>
+                    <h2>修改用户名</h2>
+                    <p>更改您的登录用户名</p>
+                </div>
+            </div>
+
+            <form id="usernameForm" onsubmit="return handleChangeUsername(event)">
+                <div class="form-group">
+                    <label for="newUsername">新用户名</label>
+                    <input type="text" id="newUsername" name="newUsername" 
+                           placeholder="请输入新用户名（至少3位）" 
+                           minlength="3" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="usernamePassword">确认密码</label>
+                    <input type="password" id="usernamePassword" name="password" 
+                           placeholder="请输入当前密码以确认身份" required>
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">💾 保存用户名</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- 修改密码 -->
+        <div class="card">
+            <div class="card-header">
+                <span class="icon">🔑</span>
+                <div>
+                    <h2>修改密码</h2>
+                    <p>更新您的登录密码</p>
+                </div>
+            </div>
+
+            <form id="passwordForm" onsubmit="return handleChangePassword(event)">
+                <div class="form-group">
+                    <label for="currentPassword">当前密码</label>
+                    <input type="password" id="currentPassword" name="currentPassword" 
+                           placeholder="请输入当前密码" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="newPassword">新密码</label>
+                    <input type="password" id="newPassword" name="newPassword" 
+                           placeholder="请输入新密码（至少4位）" 
+                           minlength="4" required
+                           oninput="checkPasswordStrength(this.value)">
+                    <div class="password-strength">
+                        <div class="password-strength-bar" id="strengthBar"></div>
+                    </div>
+                    <p class="password-hint" id="strengthText">请输入新密码</p>
+                </div>
+
+                <div class="form-group">
+                    <label for="confirmPassword">确认新密码</label>
+                    <input type="password" id="confirmPassword" name="confirmPassword" 
+                           placeholder="请再次输入新密码" required>
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">🔄 更新密码</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- 账号安全提示 -->
+        <div class="card">
+            <div class="card-header">
+                <span class="icon">💡</span>
+                <div>
+                    <h2>安全提示</h2>
+                    <p>保护您的账号安全</p>
+                </div>
+            </div>
+
+            <ul style="color: var(--text-secondary); line-height: 2; padding-left: 20px;">
+                <li>定期更换密码，建议每3个月更换一次</li>
+                <li>使用强密码：包含大小写字母、数字和特殊字符</li>
+                <li>不要在公共设备上勾选"记住我"</li>
+                <li>如发现账号异常，请立即修改密码</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        // 显示 Toast 消息
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            const icon = toast.querySelector('.toast-icon');
+            const msg = toast.querySelector('.toast-message');
+            
+            toast.className = 'toast ' + type;
+            icon.textContent = type === 'success' ? '✅' : type === 'error' ? '❌' : '⚠️';
+            msg.textContent = message;
+            
+            toast.classList.add('show');
+            
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        // 检查密码强度
+        function checkPasswordStrength(password) {
+            const strengthBar = document.getElementById('strengthBar');
+            const strengthText = document.getElementById('strengthText');
+            
+            let strength = 0;
+            
+            if (password.length >= 4) strength++;
+            if (password.length >= 8) strength++;
+            if (/[A-Z]/.test(password) && /[a-z]/.test(password)) strength++;
+            if (/[0-9]/.test(password)) strength++;
+            if (/[^A-Za-z0-9]/.test(password)) strength++;
+            
+            strengthBar.className = 'password-strength-bar';
+            
+            if (password.length === 0) {
+                strengthText.textContent = '请输入新密码';
+                strengthBar.style.width = '0%';
+            } else if (strength <= 2) {
+                strengthBar.classList.add('weak');
+                strengthText.textContent = '密码强度：弱';
+            } else if (strength <= 3) {
+                strengthBar.classList.add('medium');
+                strengthText.textContent = '密码强度：中';
+            } else {
+                strengthBar.classList.add('strong');
+                strengthText.textContent = '密码强度：强';
+            }
+        }
+
+        // 获取登录状态
+        async function loadAuthStatus() {
+            try {
+                const response = await fetch('/api/auth/status');
+                const result = await response.json();
+                
+                if (result.logged_in) {
+                    document.getElementById('displayUsername').textContent = result.username || 'admin';
+                } else {
+                    window.location.href = '/login';
+                }
+            } catch (error) {
+                console.error('获取登录状态失败:', error);
+            }
+        }
+
+        // 修改用户名
+        async function handleChangeUsername(event) {
+            event.preventDefault();
+            
+            const newUsername = document.getElementById('newUsername').value.trim();
+            const password = document.getElementById('usernamePassword').value;
+            
+            if (newUsername.length < 3) {
+                showToast('用户名长度至少3位', 'error');
+                return false;
+            }
+            
+            try {
+                const response = await fetch('/api/auth/change-username', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        new_username: newUsername,
+                        password: password
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showToast('用户名修改成功', 'success');
+                    document.getElementById('displayUsername').textContent = newUsername;
+                    document.getElementById('usernameForm').reset();
+                } else {
+                    showToast(result.error || '修改失败', 'error');
+                }
+            } catch (error) {
+                console.error('修改用户名失败:', error);
+                showToast('网络错误，请稍后重试', 'error');
+            }
+            
+            return false;
+        }
+
+        // 修改密码
+        async function handleChangePassword(event) {
+            event.preventDefault();
+            
+            const currentPassword = document.getElementById('currentPassword').value;
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            
+            if (newPassword.length < 4) {
+                showToast('新密码长度至少4位', 'error');
+                return false;
+            }
+            
+            if (newPassword !== confirmPassword) {
+                showToast('两次输入的新密码不一致', 'error');
+                return false;
+            }
+            
+            try {
+                const response = await fetch('/api/auth/change-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        current_password: currentPassword,
+                        new_password: newPassword,
+                        confirm_password: confirmPassword
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showToast('密码修改成功', 'success');
+                    document.getElementById('passwordForm').reset();
+                    document.getElementById('strengthBar').className = 'password-strength-bar';
+                    document.getElementById('strengthText').textContent = '请输入新密码';
+                } else {
+                    showToast(result.error || '修改失败', 'error');
+                }
+            } catch (error) {
+                console.error('修改密码失败:', error);
+                showToast('网络错误，请稍后重试', 'error');
+            }
+            
+            return false;
+        }
+
+        // 退出登录
+        async function handleLogout() {
+            try {
+                const response = await fetch('/api/auth/logout', {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    window.location.href = result.redirect || '/login';
+                } else {
+                    showToast('退出失败', 'error');
+                }
+            } catch (error) {
+                console.error('退出失败:', error);
+                showToast('网络错误', 'error');
+            }
+        }
+
+        // 页面加载时获取登录状态
+        document.addEventListener('DOMContentLoaded', loadAuthStatus);
+    </script>
+</body>
+</html>

@@ -41,6 +41,9 @@ from downloaders.apple_music import AppleMusicDownloader
 # 导入 Web 服务
 from web.app import app as web_app, init_app as init_web_app
 
+# 导入数据库日志处理器
+from web.db_logger import setup_database_logging, get_metadata_logger
+
 # 导入 TG 通知模块
 from web.tg_notifier import (
     TelegramNotifier, get_notifier,
@@ -73,6 +76,9 @@ class MusicBot:
         
         # 加载配置
         self.config = self.config_manager.get_all_config()
+        
+        # 设置数据库日志记录
+        setup_database_logging(self.config_manager)
         
         # 初始化下载器
         self.downloaders = {}

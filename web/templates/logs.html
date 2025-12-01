@@ -1,0 +1,1057 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>日志查看 - Music Bot</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #f5f5f7;
+            --card-bg: rgba(255, 255, 255, 0.8);
+            --text-primary: #1d1d1f;
+            --text-secondary: #86868b;
+            --accent: #007AFF;
+            --accent-hover: #0056b3;
+            --success: #34c759;
+            --warning: #ff9500;
+            --danger: #ff3b30;
+            --border: rgba(0, 0, 0, 0.1);
+            --shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-color);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        /* 头部 */
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 40px 20px;
+            background: var(--card-bg);
+            border-radius: 20px;
+            backdrop-filter: blur(20px);
+            box-shadow: var(--shadow);
+            position: relative;
+        }
+
+        .header-back {
+            position: absolute;
+            left: 20px;
+            top: 20px;
+            text-decoration: none;
+            font-size: 0.95rem;
+            padding: 10px 16px;
+            border-radius: 10px;
+            background: rgba(0, 0, 0, 0.05);
+            color: var(--text-primary);
+            transition: all 0.2s ease;
+        }
+
+        .header-back:hover {
+            background: var(--accent);
+            color: white;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, var(--accent), #5856d6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header p {
+            color: var(--text-secondary);
+            font-size: 1rem;
+        }
+
+        /* 统计卡片 */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 16px;
+            text-align: center;
+            backdrop-filter: blur(20px);
+            box-shadow: var(--shadow);
+        }
+
+        .stat-card .stat-value {
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+
+        .stat-card .stat-label {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        .stat-card.info .stat-value { color: var(--accent); }
+        .stat-card.warning .stat-value { color: var(--warning); }
+        .stat-card.error .stat-value { color: var(--danger); }
+        .stat-card.success .stat-value { color: var(--success); }
+
+        /* 过滤器 */
+        .filter-card {
+            background: var(--card-bg);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 24px;
+            backdrop-filter: blur(20px);
+            box-shadow: var(--shadow);
+        }
+
+        .filter-row {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: flex-end;
+        }
+
+        .filter-group {
+            flex: 1;
+            min-width: 150px;
+        }
+
+        .filter-group label {
+            display: block;
+            font-size: 0.85rem;
+            font-weight: 500;
+            margin-bottom: 6px;
+            color: var(--text-secondary);
+        }
+
+        .filter-group input,
+        .filter-group select {
+            width: 100%;
+            padding: 10px 14px;
+            font-size: 0.9rem;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.5);
+            color: var(--text-primary);
+            transition: all 0.2s ease;
+        }
+
+        .filter-group input:focus,
+        .filter-group select:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15);
+        }
+
+        /* 按钮 */
+        .btn {
+            padding: 10px 20px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn-secondary {
+            background: rgba(0, 0, 0, 0.05);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(0, 0, 0, 0.1);
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #2db84d;
+        }
+
+        .btn-warning {
+            background: var(--warning);
+            color: white;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 0.8rem;
+        }
+
+        /* 操作栏 */
+        .action-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .action-bar h2 {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .action-btns {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        /* 日志表格 */
+        .log-table-container {
+            background: var(--card-bg);
+            border-radius: 16px;
+            backdrop-filter: blur(20px);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+        }
+
+        .log-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+
+        .log-table th,
+        .log-table td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .log-table th {
+            background: rgba(0, 0, 0, 0.03);
+            font-weight: 600;
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .log-table tr:hover {
+            background: rgba(0, 0, 0, 0.02);
+        }
+
+        .log-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* 日志级别标签 */
+        .log-level {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .log-level.DEBUG {
+            background: rgba(134, 134, 139, 0.15);
+            color: var(--text-secondary);
+        }
+
+        .log-level.INFO {
+            background: rgba(0, 122, 255, 0.15);
+            color: var(--accent);
+        }
+
+        .log-level.WARNING {
+            background: rgba(255, 149, 0, 0.15);
+            color: var(--warning);
+        }
+
+        .log-level.ERROR {
+            background: rgba(255, 59, 48, 0.15);
+            color: var(--danger);
+        }
+
+        /* 类别标签 */
+        .log-category {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 8px;
+            font-size: 0.75rem;
+            background: rgba(0, 0, 0, 0.05);
+            color: var(--text-secondary);
+        }
+
+        .log-category.metadata {
+            background: rgba(88, 86, 214, 0.15);
+            color: #5856d6;
+        }
+
+        .log-category.download {
+            background: rgba(52, 199, 89, 0.15);
+            color: var(--success);
+        }
+
+        .log-category.telegram {
+            background: rgba(0, 136, 204, 0.15);
+            color: #0088cc;
+        }
+
+        /* 消息列 */
+        .log-message {
+            max-width: 500px;
+            word-break: break-word;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 0.8rem;
+        }
+
+        /* 时间列 */
+        .log-time {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+
+        /* 分页 */
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+            margin-top: 20px;
+            padding: 16px;
+        }
+
+        .pagination button {
+            padding: 8px 16px;
+            border: 1px solid var(--border);
+            background: var(--card-bg);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .pagination button:hover:not(:disabled) {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
+        }
+
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .pagination .page-info {
+            padding: 8px 16px;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        /* 空状态 */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+        }
+
+        .empty-state .icon {
+            font-size: 4rem;
+            margin-bottom: 16px;
+        }
+
+        .empty-state h3 {
+            font-size: 1.2rem;
+            margin-bottom: 8px;
+        }
+
+        .empty-state p {
+            color: var(--text-secondary);
+        }
+
+        /* 加载中 */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+
+        .loading .spinner {
+            display: inline-block;
+            width: 32px;
+            height: 32px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 12px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            padding: 16px 24px;
+            border-radius: 12px;
+            color: white;
+            font-weight: 500;
+            z-index: 1000;
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease;
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .toast.success { background: var(--success); }
+        .toast.error { background: var(--danger); }
+        .toast.info { background: var(--accent); }
+
+        /* 模态框 */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 20px;
+            padding: 28px;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .modal-header h3 {
+            font-size: 1.2rem;
+        }
+
+        .modal-close {
+            background: rgba(0, 0, 0, 0.05);
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-secondary);
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-close:hover {
+            background: var(--danger);
+            color: white;
+        }
+
+        .modal-body {
+            margin-bottom: 20px;
+        }
+
+        .modal-footer {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+
+        /* 导出选项 */
+        .export-options {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .export-option {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .export-option:hover {
+            background: rgba(0, 122, 255, 0.05);
+            border-color: var(--accent);
+        }
+
+        .export-option.selected {
+            background: rgba(0, 122, 255, 0.1);
+            border-color: var(--accent);
+        }
+
+        .export-option input {
+            display: none;
+        }
+
+        .export-option .icon {
+            font-size: 1.5rem;
+        }
+
+        .export-option .info {
+            flex: 1;
+        }
+
+        .export-option .info .title {
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+
+        .export-option .info .desc {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        /* 响应式 */
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 1.5rem;
+            }
+
+            .header-back {
+                position: static;
+                display: inline-block;
+                margin-bottom: 16px;
+            }
+
+            .filter-row {
+                flex-direction: column;
+            }
+
+            .filter-group {
+                min-width: 100%;
+            }
+
+            .log-table {
+                font-size: 0.75rem;
+            }
+
+            .log-table th,
+            .log-table td {
+                padding: 8px 10px;
+            }
+
+            .log-message {
+                max-width: 200px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 头部 -->
+        <div class="header">
+            <a href="/" class="header-back">← 返回首页</a>
+            <h1>📋 日志查看</h1>
+            <p>查看系统运行日志，支持元数据日志单独导出</p>
+        </div>
+
+        <!-- 统计卡片 -->
+        <div class="stats-row" id="statsRow">
+            <div class="stat-card">
+                <div class="stat-value" id="totalLogs">-</div>
+                <div class="stat-label">总日志</div>
+            </div>
+            <div class="stat-card info">
+                <div class="stat-value" id="infoLogs">-</div>
+                <div class="stat-label">INFO</div>
+            </div>
+            <div class="stat-card warning">
+                <div class="stat-value" id="warningLogs">-</div>
+                <div class="stat-label">WARNING</div>
+            </div>
+            <div class="stat-card error">
+                <div class="stat-value" id="errorLogs">-</div>
+                <div class="stat-label">ERROR</div>
+            </div>
+            <div class="stat-card success">
+                <div class="stat-value" id="metadataLogs">-</div>
+                <div class="stat-label">元数据</div>
+            </div>
+        </div>
+
+        <!-- 过滤器 -->
+        <div class="filter-card">
+            <div class="filter-row">
+                <div class="filter-group">
+                    <label>日志级别</label>
+                    <select id="filterLevel">
+                        <option value="">全部级别</option>
+                        <option value="DEBUG">DEBUG</option>
+                        <option value="INFO">INFO</option>
+                        <option value="WARNING">WARNING</option>
+                        <option value="ERROR">ERROR</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>日志类别</label>
+                    <select id="filterCategory">
+                        <option value="">全部类别</option>
+                        <option value="metadata">元数据 (metadata)</option>
+                        <option value="download">下载 (download)</option>
+                        <option value="telegram">Telegram</option>
+                        <option value="general">常规 (general)</option>
+                    </select>
+                </div>
+                <div class="filter-group" style="flex: 2;">
+                    <label>搜索关键词</label>
+                    <input type="text" id="filterSearch" placeholder="搜索日志内容...">
+                </div>
+                <div class="filter-group" style="flex: 0;">
+                    <button class="btn btn-primary" onclick="applyFilter()">🔍 筛选</button>
+                </div>
+                <div class="filter-group" style="flex: 0;">
+                    <button class="btn btn-secondary" onclick="resetFilter()">重置</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 操作栏 -->
+        <div class="action-bar">
+            <h2>📜 日志记录</h2>
+            <div class="action-btns">
+                <button class="btn btn-success btn-small" onclick="showExportModal()">📥 导出日志</button>
+                <button class="btn btn-warning btn-small" onclick="exportMetadataLogs()">🏷️ 导出元数据日志</button>
+                <button class="btn btn-secondary btn-small" onclick="loadLogs()">🔄 刷新</button>
+                <button class="btn btn-danger btn-small" onclick="showClearModal()">🗑️ 清理</button>
+            </div>
+        </div>
+
+        <!-- 日志表格 -->
+        <div class="log-table-container">
+            <table class="log-table">
+                <thead>
+                    <tr>
+                        <th style="width: 160px;">时间</th>
+                        <th style="width: 80px;">级别</th>
+                        <th style="width: 100px;">类别</th>
+                        <th>消息</th>
+                    </tr>
+                </thead>
+                <tbody id="logTableBody">
+                    <tr>
+                        <td colspan="4">
+                            <div class="loading">
+                                <div class="spinner"></div>
+                                <p>加载中...</p>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 分页 -->
+        <div class="pagination">
+            <button id="prevPage" onclick="prevPage()">上一页</button>
+            <span class="page-info" id="pageInfo">第 1 页</span>
+            <button id="nextPage" onclick="nextPage()">下一页</button>
+        </div>
+    </div>
+
+    <!-- 导出模态框 -->
+    <div class="modal" id="exportModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>📥 导出日志</h3>
+                <button class="modal-close" onclick="closeModal('exportModal')">×</button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 16px; color: var(--text-secondary);">选择导出格式：</p>
+                <div class="export-options">
+                    <label class="export-option selected" onclick="selectExportFormat('json')">
+                        <input type="radio" name="exportFormat" value="json" checked>
+                        <span class="icon">📄</span>
+                        <div class="info">
+                            <div class="title">JSON 格式</div>
+                            <div class="desc">结构化数据，便于程序处理</div>
+                        </div>
+                    </label>
+                    <label class="export-option" onclick="selectExportFormat('csv')">
+                        <input type="radio" name="exportFormat" value="csv">
+                        <span class="icon">📊</span>
+                        <div class="info">
+                            <div class="title">CSV 格式</div>
+                            <div class="desc">表格格式，可用 Excel 打开</div>
+                        </div>
+                    </label>
+                    <label class="export-option" onclick="selectExportFormat('txt')">
+                        <input type="radio" name="exportFormat" value="txt">
+                        <span class="icon">📝</span>
+                        <div class="info">
+                            <div class="title">TXT 格式</div>
+                            <div class="desc">纯文本，便于阅读</div>
+                        </div>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('exportModal')">取消</button>
+                <button class="btn btn-primary" onclick="doExport()">导出</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 清理模态框 -->
+    <div class="modal" id="clearModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>🗑️ 清理日志</h3>
+                <button class="modal-close" onclick="closeModal('clearModal')">×</button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 16px;">选择要清理的日志范围：</p>
+                <div class="filter-group" style="margin-bottom: 12px;">
+                    <label>清理日期之前的日志</label>
+                    <input type="date" id="clearBeforeDate">
+                </div>
+                <div class="filter-group">
+                    <label>指定类别（留空清理全部）</label>
+                    <select id="clearCategory">
+                        <option value="">全部类别</option>
+                        <option value="metadata">元数据</option>
+                        <option value="download">下载</option>
+                        <option value="telegram">Telegram</option>
+                        <option value="general">常规</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('clearModal')">取消</button>
+                <button class="btn btn-danger" onclick="doClear()">清理</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        // 状态变量
+        let currentPage = 1;
+        let pageSize = 50;
+        let totalLogs = 0;
+        let selectedExportFormat = 'json';
+
+        // 显示 Toast
+        function showToast(message, type = 'info') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = `toast ${type} show`;
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+
+        // 请求包装
+        async function fetchWithAuth(url, options = {}) {
+            const response = await fetch(url, options);
+            if (response.status === 401) {
+                window.location.href = '/login';
+                throw new Error('未登录');
+            }
+            return response;
+        }
+
+        // 加载统计信息
+        async function loadStats() {
+            try {
+                const response = await fetchWithAuth('/api/logs/stats');
+                const result = await response.json();
+                
+                if (result.success) {
+                    const stats = result.data;
+                    document.getElementById('totalLogs').textContent = stats.total || 0;
+                    document.getElementById('infoLogs').textContent = stats.by_level?.INFO || 0;
+                    document.getElementById('warningLogs').textContent = stats.by_level?.WARNING || 0;
+                    document.getElementById('errorLogs').textContent = stats.by_level?.ERROR || 0;
+                    document.getElementById('metadataLogs').textContent = stats.metadata_count || 0;
+                }
+            } catch (error) {
+                console.error('加载统计失败:', error);
+            }
+        }
+
+        // 加载日志
+        async function loadLogs() {
+            const tbody = document.getElementById('logTableBody');
+            tbody.innerHTML = '<tr><td colspan="4"><div class="loading"><div class="spinner"></div><p>加载中...</p></div></td></tr>';
+
+            try {
+                const level = document.getElementById('filterLevel').value;
+                const category = document.getElementById('filterCategory').value;
+                const search = document.getElementById('filterSearch').value;
+                
+                const params = new URLSearchParams({
+                    limit: pageSize,
+                    offset: (currentPage - 1) * pageSize
+                });
+                
+                if (level) params.append('level', level);
+                if (category) params.append('category', category);
+                if (search) params.append('search', search);
+                
+                const response = await fetchWithAuth(`/api/logs?${params}`);
+                const result = await response.json();
+
+                if (result.success) {
+                    totalLogs = result.data.total;
+                    renderLogs(result.data.logs);
+                    updatePagination();
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="4"><div class="empty-state"><div class="icon">❌</div><h3>加载失败</h3></div></td></tr>';
+                }
+            } catch (error) {
+                console.error('加载日志失败:', error);
+                tbody.innerHTML = '<tr><td colspan="4"><div class="empty-state"><div class="icon">❌</div><h3>加载失败</h3></div></td></tr>';
+            }
+        }
+
+        // 渲染日志
+        function renderLogs(logs) {
+            const tbody = document.getElementById('logTableBody');
+
+            if (!logs || logs.length === 0) {
+                tbody.innerHTML = `
+                    <tr><td colspan="4">
+                        <div class="empty-state">
+                            <div class="icon">📭</div>
+                            <h3>暂无日志</h3>
+                            <p>系统运行时会产生日志记录</p>
+                        </div>
+                    </td></tr>
+                `;
+                return;
+            }
+
+            tbody.innerHTML = logs.map(log => `
+                <tr>
+                    <td class="log-time">${formatTime(log.timestamp)}</td>
+                    <td><span class="log-level ${log.level}">${log.level}</span></td>
+                    <td><span class="log-category ${log.category || 'general'}">${log.category || 'general'}</span></td>
+                    <td class="log-message">${escapeHtml(log.message)}</td>
+                </tr>
+            `).join('');
+        }
+
+        // 格式化时间
+        function formatTime(timestamp) {
+            if (!timestamp) return '-';
+            const date = new Date(timestamp);
+            return date.toLocaleString('zh-CN');
+        }
+
+        // 转义 HTML
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // 更新分页
+        function updatePagination() {
+            const totalPages = Math.ceil(totalLogs / pageSize) || 1;
+            document.getElementById('pageInfo').textContent = `第 ${currentPage} / ${totalPages} 页 (共 ${totalLogs} 条)`;
+            document.getElementById('prevPage').disabled = currentPage <= 1;
+            document.getElementById('nextPage').disabled = currentPage >= totalPages;
+        }
+
+        // 上一页
+        function prevPage() {
+            if (currentPage > 1) {
+                currentPage--;
+                loadLogs();
+            }
+        }
+
+        // 下一页
+        function nextPage() {
+            const totalPages = Math.ceil(totalLogs / pageSize);
+            if (currentPage < totalPages) {
+                currentPage++;
+                loadLogs();
+            }
+        }
+
+        // 应用筛选
+        function applyFilter() {
+            currentPage = 1;
+            loadLogs();
+        }
+
+        // 重置筛选
+        function resetFilter() {
+            document.getElementById('filterLevel').value = '';
+            document.getElementById('filterCategory').value = '';
+            document.getElementById('filterSearch').value = '';
+            currentPage = 1;
+            loadLogs();
+        }
+
+        // 显示导出模态框
+        function showExportModal() {
+            document.getElementById('exportModal').classList.add('show');
+        }
+
+        // 选择导出格式
+        function selectExportFormat(format) {
+            selectedExportFormat = format;
+            document.querySelectorAll('.export-option').forEach(el => el.classList.remove('selected'));
+            event.currentTarget.classList.add('selected');
+        }
+
+        // 执行导出
+        function doExport() {
+            const level = document.getElementById('filterLevel').value;
+            const category = document.getElementById('filterCategory').value;
+            
+            const params = new URLSearchParams({ format: selectedExportFormat });
+            if (level) params.append('level', level);
+            if (category) params.append('category', category);
+            
+            window.location.href = `/api/logs/export?${params}`;
+            closeModal('exportModal');
+            showToast('开始导出日志', 'success');
+        }
+
+        // 导出元数据日志
+        function exportMetadataLogs() {
+            const params = new URLSearchParams({
+                format: 'json',
+                category: 'metadata'
+            });
+            window.location.href = `/api/logs/export?${params}`;
+            showToast('开始导出元数据日志', 'success');
+        }
+
+        // 显示清理模态框
+        function showClearModal() {
+            document.getElementById('clearModal').classList.add('show');
+        }
+
+        // 执行清理
+        async function doClear() {
+            const beforeDate = document.getElementById('clearBeforeDate').value;
+            const category = document.getElementById('clearCategory').value;
+
+            if (!beforeDate && !category) {
+                if (!confirm('确定要清理所有日志吗？此操作不可撤销！')) {
+                    return;
+                }
+            }
+
+            try {
+                const response = await fetchWithAuth('/api/logs/clear', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        before_date: beforeDate || null,
+                        category: category || null
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showToast(result.message, 'success');
+                    closeModal('clearModal');
+                    loadLogs();
+                    loadStats();
+                } else {
+                    showToast(result.error || '清理失败', 'error');
+                }
+            } catch (error) {
+                console.error('清理日志失败:', error);
+                showToast('清理日志失败', 'error');
+            }
+        }
+
+        // 关闭模态框
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove('show');
+        }
+
+        // 回车搜索
+        document.getElementById('filterSearch').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') applyFilter();
+        });
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStats();
+            loadLogs();
+        });
+    </script>
+</body>
+</html>

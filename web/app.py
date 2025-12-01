@@ -729,6 +729,165 @@ def sync_all_playlists():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# ==================== 日志 API ====================
+
+@app.route('/api/logs', methods=['GET'])
+@login_required
+def get_logs():
+    """获取日志列表"""
+    try:
+        limit = request.args.get('limit', 100, type=int)
+        offset = request.args.get('offset', 0, type=int)
+        level = request.args.get('level', None)
+        category = request.args.get('category', None)
+        search = request.args.get('search', None)
+        start_time = request.args.get('start_time', None)
+        end_time = request.args.get('end_time', None)
+        
+        logs = config_manager.get_logs(
+            limit=limit,
+            offset=offset,
+            level=level,
+            category=category,
+            search=search,
+            start_time=start_time,
+            end_time=end_time
+        )
+        
+        total = config_manager.get_log_count(
+            level=level,
+            category=category,
+            search=search,
+            start_time=start_time,
+            end_time=end_time
+        )
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'logs': logs,
+                'total': total,
+                'limit': limit,
+                'offset': offset
+            }
+        })
+    except Exception as e:
+        logger.error(f"获取日志失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/logs/categories', methods=['GET'])
+@login_required
+def get_log_categories():
+    """获取日志类别列表"""
+    try:
+        categories = config_manager.get_log_categories()
+        return jsonify({
+            'success': True,
+            'data': categories
+        })
+    except Exception as e:
+        logger.error(f"获取日志类别失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/logs/export', methods=['GET'])
+@login_required
+def export_logs():
+    """导出日志"""
+    try:
+        category = request.args.get('category', None)
+        level = request.args.get('level', None)
+        start_time = request.args.get('start_time', None)
+        end_time = request.args.get('end_time', None)
+        format_type = request.args.get('format', 'json')
+        
+        content = config_manager.export_logs(
+            category=category,
+            level=level,
+            start_time=start_time,
+            end_time=end_time,
+            format=format_type
+        )
+        
+        # 设置响应类型
+        if format_type == 'json':
+            mimetype = 'application/json'
+            filename = 'logs.json'
+        elif format_type == 'csv':
+            mimetype = 'text/csv'
+            filename = 'logs.csv'
+        else:
+            mimetype = 'text/plain'
+            filename = 'logs.txt'
+        
+        # 如果是元数据类别，在文件名中标注
+        if category == 'metadata':
+            filename = f'metadata_{filename}'
+        
+        from flask import Response
+        response = Response(
+            content,
+            mimetype=mimetype,
+            headers={'Content-Disposition': f'attachment; filename={filename}'}
+        )
+        return response
+        
+    except Exception as e:
+        logger.error(f"导出日志失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/logs/clear', methods=['POST'])
+@login_required
+def clear_logs():
+    """清理日志"""
+    try:
+        data = request.get_json() or {}
+        before_date = data.get('before_date', None)
+        category = data.get('category', None)
+        
+        deleted = config_manager.clear_logs(before_date=before_date, category=category)
+        
+        return jsonify({
+            'success': True,
+            'message': f'已清理 {deleted} 条日志',
+            'deleted': deleted
+        })
+    except Exception as e:
+        logger.error(f"清理日志失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/logs/stats', methods=['GET'])
+@login_required
+def get_log_stats():
+    """获取日志统计信息"""
+    try:
+        # 获取各级别日志数量
+        stats = {
+            'total': config_manager.get_log_count(),
+            'by_level': {
+                'DEBUG': config_manager.get_log_count(level='DEBUG'),
+                'INFO': config_manager.get_log_count(level='INFO'),
+                'WARNING': config_manager.get_log_count(level='WARNING'),
+                'ERROR': config_manager.get_log_count(level='ERROR'),
+            },
+            'categories': config_manager.get_log_categories()
+        }
+        
+        # 获取元数据相关日志数量
+        stats['metadata_count'] = config_manager.get_log_count(category='metadata')
+        
+        return jsonify({
+            'success': True,
+            'data': stats
+        })
+    except Exception as e:
+        logger.error(f"获取日志统计失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # ==================== 页面路由 ====================
 
 @app.route('/login')
@@ -787,6 +946,13 @@ def account():
 def playlists():
     """歌单订阅管理页面"""
     return render_template('playlists.html')
+
+
+@app.route('/logs')
+@login_required
+def logs():
+    """日志查看页面"""
+    return render_template('logs.html')
 
 
 # ==================== 静态文件 ====================

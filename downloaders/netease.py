@@ -598,39 +598,49 @@ class NeteaseDownloader(BaseDownloader):
             tuple: (songs_list, playlist_name)
         """
         try:
-            url = f"{self.api_url}/api/playlist/detail"
+            # 使用 v6 API 获取完整歌单信息（包含所有 trackIds）
+            url = f"{self.api_url}/api/v6/playlist/detail"
             params = {
                 'id': playlist_id,
+                'n': 100000,  # 请求尽可能多的歌曲
+                's': 0,  # 不需要收藏者信息
                 'csrf_token': ''
             }
             
-            response = self.session.get(url, params=params, timeout=15)
+            response = self.session.get(url, params=params, timeout=30)
             response.raise_for_status()
             data = response.json()
             
-            if data.get('code') == 200 and data.get('result'):
-                playlist = data['result']
+            if data.get('code') == 200 and data.get('playlist'):
+                playlist = data['playlist']
                 playlist_name = playlist.get('name', '未知歌单')
                 tracks = playlist.get('tracks', [])
                 
-                # 获取完整的歌曲ID列表（trackIds 包含所有歌曲，tracks 可能只有前20首）
+                # 获取完整的歌曲ID列表
+                # v6 API 的 trackIds 在 playlist 对象里
                 track_ids = playlist.get('trackIds', [])
-                all_song_ids = [str(t['id']) for t in track_ids] if track_ids else [str(song['id']) for song in tracks]
                 
-                logger.info(f"📋 歌单 '{playlist_name}' 共 {len(all_song_ids)} 首歌曲 (tracks返回 {len(tracks)} 首)")
+                # 优先使用 trackIds（包含完整列表）
+                if track_ids:
+                    all_song_ids = [str(t['id']) for t in track_ids]
+                else:
+                    all_song_ids = [str(song['id']) for song in tracks]
+                
+                logger.info(f"📋 歌单 '{playlist_name}' 共 {len(all_song_ids)} 首歌曲 (trackIds: {len(track_ids)}, tracks: {len(tracks)})")
                 
                 if not all_song_ids:
                     logger.warning(f"⚠️ 歌单 {playlist_name} 没有歌曲")
                     return [], playlist_name
                 
-                # 如果 tracks 数量少于 trackIds，说明需要额外获取歌曲详情
+                # 如果 tracks 数量少于 all_song_ids，需要额外获取歌曲详情
                 if len(tracks) < len(all_song_ids):
-                    logger.info(f"📝 歌单歌曲不完整，正在获取全部 {len(all_song_ids)} 首歌曲详情...")
+                    logger.info(f"📝 歌单歌曲不完整 ({len(tracks)}/{len(all_song_ids)})，正在获取全部歌曲详情...")
                     # 分批获取歌曲详情（每批最多 500 首）
                     all_tracks = []
                     batch_size = 500
                     for i in range(0, len(all_song_ids), batch_size):
                         batch_ids = all_song_ids[i:i + batch_size]
+                        logger.info(f"📝 获取第 {i//batch_size + 1} 批歌曲详情 ({len(batch_ids)} 首)...")
                         batch_tracks = self._get_songs_detail(batch_ids)
                         all_tracks.extend(batch_tracks)
                         if i + batch_size < len(all_song_ids):
@@ -707,12 +717,82 @@ class NeteaseDownloader(BaseDownloader):
                 logger.info(f"✅ 歌单歌曲列表构建完成: {len(result)} 首")
                 return result, playlist_name
             
-            return [], '未知歌单'
+            # v6 API 失败，尝试旧版 API
+            logger.warning("⚠️ v6 API 获取失败，尝试使用旧版 API...")
+            return self._get_playlist_songs_legacy(playlist_id)
             
         except Exception as e:
             logger.error(f"❌ 获取歌单歌曲失败: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            # 尝试旧版 API
+            try:
+                return self._get_playlist_songs_legacy(playlist_id)
+            except:
+                return [], '未知歌单'
+    
+    def _get_playlist_songs_legacy(self, playlist_id: str) -> tuple:
+        """使用旧版 API 获取歌单歌曲（备用方案）"""
+        try:
+            url = f"{self.api_url}/api/playlist/detail"
+            params = {
+                'id': playlist_id,
+                'csrf_token': ''
+            }
+            
+            response = self.session.get(url, params=params, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get('code') == 200 and data.get('result'):
+                playlist = data['result']
+                playlist_name = playlist.get('name', '未知歌单')
+                tracks = playlist.get('tracks', [])
+                track_ids = playlist.get('trackIds', [])
+                
+                logger.info(f"📋 [旧版API] 歌单 '{playlist_name}' trackIds: {len(track_ids)}, tracks: {len(tracks)}")
+                
+                # 如果有 trackIds 但 tracks 不完整
+                if track_ids and len(tracks) < len(track_ids):
+                    all_song_ids = [str(t['id']) for t in track_ids]
+                    logger.info(f"📝 [旧版API] 获取全部 {len(all_song_ids)} 首歌曲详情...")
+                    
+                    all_tracks = []
+                    batch_size = 500
+                    for i in range(0, len(all_song_ids), batch_size):
+                        batch_ids = all_song_ids[i:i + batch_size]
+                        batch_tracks = self._get_songs_detail(batch_ids)
+                        all_tracks.extend(batch_tracks)
+                        if i + batch_size < len(all_song_ids):
+                            time.sleep(0.3)
+                    tracks = all_tracks
+                
+                # 构建简化的歌曲列表
+                result = []
+                for song in tracks:
+                    song_id = str(song['id'])
+                    artists = song.get('artists', []) or song.get('ar', [])
+                    album = song.get('album', {}) or song.get('al', {})
+                    
+                    result.append({
+                        'id': song_id,
+                        'name': song.get('name', '未知'),
+                        'artist': ', '.join([a['name'] for a in artists]) if artists else '未知',
+                        'album': album.get('name', '未知'),
+                        'album_id': album.get('id'),
+                        'album_artist': artists[0]['name'] if artists else '未知',
+                        'cover': album.get('picUrl', ''),
+                        'track_number': 1,
+                        'total_tracks': 1,
+                        'disc_number': '1',
+                    })
+                
+                return result, playlist_name
+            
+            return [], '未知歌单'
+            
+        except Exception as e:
+            logger.error(f"❌ [旧版API] 获取歌单失败: {e}")
             return [], '未知歌单'
     
     def _get_songs_detail(self, song_ids: List[str]) -> List[Dict]:
@@ -725,28 +805,33 @@ class NeteaseDownloader(BaseDownloader):
             歌曲详情列表
         """
         try:
-            url = f"{self.api_url}/api/song/detail"
-            # 使用 c 参数批量获取
-            c_param = json.dumps([{"id": sid} for sid in song_ids])
-            params = {
-                'c': c_param,
-                'ids': json.dumps([int(sid) for sid in song_ids]),
+            # 使用 POST 请求避免 URL 长度限制
+            url = f"{self.api_url}/api/v3/song/detail"
+            
+            # 构建请求数据
+            c_param = [{"id": int(sid)} for sid in song_ids]
+            data = {
+                'c': json.dumps(c_param),
                 'csrf_token': ''
             }
             
-            response = self.session.get(url, params=params, timeout=30)
+            response = self.session.post(url, data=data, timeout=30)
             response.raise_for_status()
-            data = response.json()
+            result = response.json()
             
-            if data.get('code') == 200:
-                songs = data.get('songs', [])
+            if result.get('code') == 200:
+                songs = result.get('songs', [])
                 logger.debug(f"✅ 批量获取 {len(songs)} 首歌曲详情")
                 return songs
+            else:
+                logger.warning(f"⚠️ 获取歌曲详情返回错误: {result.get('code')}, {result.get('message', '')}")
             
             return []
             
         except Exception as e:
             logger.warning(f"⚠️ 批量获取歌曲详情失败: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
             return []
 
     # ============ 下载功能 ============

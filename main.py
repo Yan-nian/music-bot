@@ -693,53 +693,81 @@ class MusicBot:
         """Bot 健康检查循环 - 定期检测连接状态"""
         logger.info("💓 Bot 健康检查服务已启动")
         check_interval = 300  # 每 5 分钟检查一次
+        consecutive_failures = 0
+        max_failures = 3  # 连续失败 3 次才重连
         
         while True:
             try:
                 await asyncio.sleep(check_interval)
                 
                 # 检查 Bot 是否还在运行
-                if self.app and self.app.updater and self.app.updater.running:
+                if not self.app or not self.app.bot:
+                    logger.warning("⚠️ Bot 应用未初始化")
+                    consecutive_failures += 1
+                else:
                     # 尝试获取 Bot 信息来验证连接
                     try:
-                        bot_info = await self.app.bot.get_me()
-                        logger.debug(f"💓 Bot 健康检查通过: @{bot_info.username}")
+                        bot_info = await asyncio.wait_for(
+                            self.app.bot.get_me(),
+                            timeout=30  # 30 秒超时
+                        )
+                        logger.info(f"💓 Bot 健康检查通过: @{bot_info.username}")
+                        consecutive_failures = 0  # 重置失败计数
+                    except asyncio.TimeoutError:
+                        logger.warning("⚠️ Bot 健康检查超时")
+                        consecutive_failures += 1
                     except Exception as e:
-                        logger.warning(f"⚠️ Bot 连接异常，尝试重新连接: {e}")
-                        await self._reconnect_bot()
-                else:
-                    logger.warning("⚠️ Bot Updater 已停止，尝试重新启动")
+                        logger.warning(f"⚠️ Bot 健康检查失败: {e}")
+                        consecutive_failures += 1
+                
+                # 连续失败多次才尝试重连
+                if consecutive_failures >= max_failures:
+                    logger.warning(f"⚠️ Bot 连续 {consecutive_failures} 次检查失败，尝试重新连接")
                     await self._reconnect_bot()
+                    consecutive_failures = 0
                     
             except asyncio.CancelledError:
                 logger.info("💓 健康检查任务已取消")
                 break
             except Exception as e:
-                logger.error(f"❌ 健康检查异常: {e}")
+                logger.error(f"❌ 健康检查循环异常: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
                 await asyncio.sleep(60)  # 异常后等待 1 分钟再检查
     
     async def _reconnect_bot(self):
         """重新连接 Bot"""
-        try:
-            logger.info("🔄 正在重新连接 Telegram Bot...")
-            
-            # 停止当前 updater
-            if self.app and self.app.updater:
-                try:
-                    await self.app.updater.stop()
-                except Exception:
-                    pass
-            
-            # 等待一段时间
-            await asyncio.sleep(5)
-            
-            # 重新启动 polling
-            await self.app.updater.start_polling(drop_pending_updates=True)
-            logger.info("✅ Telegram Bot 重新连接成功")
-            
-        except Exception as e:
-            logger.error(f"❌ 重新连接失败: {e}")
-            logger.info("⏳ 将在 60 秒后重试...")
+        max_reconnect_attempts = 3
+        
+        for attempt in range(1, max_reconnect_attempts + 1):
+            try:
+                logger.info(f"🔄 正在重新连接 Telegram Bot (尝试 {attempt}/{max_reconnect_attempts})...")
+                
+                # 停止当前 updater
+                if self.app and self.app.updater:
+                    try:
+                        if hasattr(self.app.updater, 'running') and self.app.updater.running:
+                            await self.app.updater.stop()
+                            logger.info("🔄 已停止旧的 updater")
+                    except Exception as e:
+                        logger.warning(f"⚠️ 停止 updater 时出错: {e}")
+                
+                # 等待一段时间让连接完全关闭
+                await asyncio.sleep(5)
+                
+                # 重新启动 polling
+                await self.app.updater.start_polling(drop_pending_updates=True)
+                logger.info("✅ Telegram Bot 重新连接成功")
+                return  # 成功则退出
+                
+            except Exception as e:
+                logger.error(f"❌ 重新连接失败 (尝试 {attempt}): {e}")
+                if attempt < max_reconnect_attempts:
+                    wait_time = 30 * attempt  # 递增等待时间
+                    logger.info(f"⏳ 等待 {wait_time} 秒后重试...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error("❌ 多次重连失败，Bot 可能需要手动重启")
 
 
 def run_web_server(host: str = '0.0.0.0', port: int = 5000):

@@ -131,6 +131,15 @@ class MusicBot:
     
     async def handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理 /start 命令"""
+        user = update.message.from_user
+        logger.info(f"📨 收到 /start 命令: 用户={user.id}({user.username})")
+        
+        # 检查用户权限
+        if not self.check_allowed_user(user.id):
+            logger.warning(f"⚠️ 用户 {user.id} 不在允许列表中")
+            await update.message.reply_text("⚠️ 您没有权限使用此 Bot")
+            return
+            
         welcome_msg = (
             "🎵 *Music Bot* - 音乐下载机器人\n\n"
             "发送音乐链接即可下载！\n\n"
@@ -199,10 +208,20 @@ class MusicBot:
         if not update.message or not update.message.text:
             return
         
+        user = update.message.from_user
         text = update.message.text.strip()
+        
+        # 记录收到的消息
+        logger.info(f"📨 收到消息: 用户={user.id}({user.username}), 内容={text[:50]}...")
+        
+        # 检查用户权限
+        if not self.check_allowed_user(user.id):
+            logger.warning(f"⚠️ 用户 {user.id} 不在允许列表中")
+            return
         
         # 检查是否是链接
         if not ('http://' in text or 'https://' in text or 'music.163.com' in text):
+            logger.debug(f"📝 消息不是链接，已忽略")
             return
         
         # 提取 URL
@@ -705,20 +724,31 @@ class MusicBot:
                     logger.warning("⚠️ Bot 应用未初始化")
                     consecutive_failures += 1
                 else:
-                    # 尝试获取 Bot 信息来验证连接
-                    try:
-                        bot_info = await asyncio.wait_for(
-                            self.app.bot.get_me(),
-                            timeout=30  # 30 秒超时
-                        )
-                        logger.info(f"💓 Bot 健康检查通过: @{bot_info.username}")
-                        consecutive_failures = 0  # 重置失败计数
-                    except asyncio.TimeoutError:
-                        logger.warning("⚠️ Bot 健康检查超时")
+                    # 检查 updater 是否在运行
+                    updater_running = (
+                        self.app.updater and 
+                        hasattr(self.app.updater, 'running') and 
+                        self.app.updater.running
+                    )
+                    
+                    if not updater_running:
+                        logger.warning("⚠️ Updater 未运行，可能无法接收消息")
                         consecutive_failures += 1
-                    except Exception as e:
-                        logger.warning(f"⚠️ Bot 健康检查失败: {e}")
-                        consecutive_failures += 1
+                    else:
+                        # 尝试获取 Bot 信息来验证连接
+                        try:
+                            bot_info = await asyncio.wait_for(
+                                self.app.bot.get_me(),
+                                timeout=30  # 30 秒超时
+                            )
+                            logger.info(f"💓 Bot 健康检查通过: @{bot_info.username}, Updater 运行中")
+                            consecutive_failures = 0  # 重置失败计数
+                        except asyncio.TimeoutError:
+                            logger.warning("⚠️ Bot 健康检查超时")
+                            consecutive_failures += 1
+                        except Exception as e:
+                            logger.warning(f"⚠️ Bot 健康检查失败: {e}")
+                            consecutive_failures += 1
                 
                 # 连续失败多次才尝试重连
                 if consecutive_failures >= max_failures:

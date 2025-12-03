@@ -1164,6 +1164,14 @@ class NeteaseDownloader(BaseDownloader):
         if not new_songs:
             logger.info(f"✅ 歌单 '{playlist_name}' 没有新增歌曲")
             results['message'] = '没有新增歌曲'
+            
+            # 即使没有新歌曲也要更新检查时间，避免重复检查
+            if self.config_manager:
+                self.config_manager.update_subscribed_playlist(
+                    playlist_id=playlist_id,
+                    last_check_time=time.strftime('%Y-%m-%d %H:%M:%S'),
+                    last_song_count=len(songs)
+                )
             return results
         
         # 下载新增歌曲

@@ -88,6 +88,9 @@ class MusicMetadataManager:
             logger.error(f"❌ 文件不存在: {file_path}")
             return False
         
+        # 记录详细的元数据信息（用于排查 Plex 刮削问题）
+        self._log_metadata_details(file_path, metadata, cover_url)
+        
         # 如果提供了 cover_url 但没有 cover_data，则下载封面
         if cover_url and not cover_data:
             cover_data = self._download_cover_image(cover_url)
@@ -103,6 +106,52 @@ class MusicMetadataManager:
             logger.warning(f"⚠️ 无可用的音频标签库处理 {file_ext} 文件")
             logger.info("💡 建议安装: pip install mutagen")
             return False
+    
+    def _log_metadata_details(
+        self,
+        file_path: Path,
+        metadata: Dict[str, str],
+        cover_url: Optional[str] = None
+    ) -> None:
+        """记录详细的元数据信息，用于排查问题"""
+        # 检查关键字段是否缺失
+        missing_fields = []
+        empty_fields = []
+        
+        critical_fields = ['title', 'artist', 'album', 'album_artist']
+        for field in critical_fields:
+            value = metadata.get(field)
+            if value is None:
+                missing_fields.append(field)
+            elif value == '' or (isinstance(value, str) and value.strip() == ''):
+                empty_fields.append(field)
+        
+        # 记录元数据摘要（INFO级别，方便在日志中快速定位）
+        title = metadata.get('title', '未知')
+        artist = metadata.get('artist', '未知')
+        album = metadata.get('album', '未知')
+        album_artist = metadata.get('album_artist', '未知')
+        track = metadata.get('track_number', '-')
+        total = metadata.get('total_tracks', '-')
+        date = metadata.get('date', '-')
+        
+        logger.info(f"📋 元数据摘要: {file_path.name}")
+        logger.info(f"   标题={title} | 艺术家={artist} | 专辑={album}")
+        logger.info(f"   专辑艺术家={album_artist} | 曲目={track}/{total} | 年份={date}")
+        logger.info(f"   封面={'有' if cover_url else '无'}")
+        
+        # 警告缺失或空的关键字段
+        if missing_fields:
+            logger.warning(f"⚠️ 关键字段缺失: {', '.join(missing_fields)} - 可能影响Plex刮削")
+        if empty_fields:
+            logger.warning(f"⚠️ 关键字段为空: {', '.join(empty_fields)} - 可能影响Plex刮削")
+        
+        # 特别检查 album_artist（Plex 最依赖这个字段）
+        if not metadata.get('album_artist') or metadata.get('album_artist', '').strip() == '':
+            if metadata.get('artist'):
+                logger.info(f"💡 album_artist为空，将使用artist作为fallback: {metadata.get('artist')}")
+            else:
+                logger.warning(f"⚠️ artist和album_artist都为空，Plex可能无法正确刮削此歌曲")
     
     def _add_metadata_with_mutagen(
         self, 
@@ -227,11 +276,17 @@ class MusicMetadataManager:
             
             # 保存标签
             tags.save(str(file_path))
+            
+            # 验证写入结果
+            self._verify_metadata_written(file_path, 'mp3', metadata, cover_data)
+            
             logger.info(f"✅ 成功为MP3文件添加元数据: {file_path.name}")
             return True
             
         except Exception as e:
             logger.error(f"❌ 为MP3文件添加元数据失败: {e}")
+            import traceback
+            logger.error(f"   详细错误: {traceback.format_exc()}")
             return False
     
     def _add_metadata_flac_mutagen(
@@ -311,11 +366,17 @@ class MusicMetadataManager:
             
             # 保存标签
             audio_file.save()
+            
+            # 验证写入结果
+            self._verify_metadata_written(file_path, 'flac', metadata, cover_data)
+            
             logger.info(f"✅ 成功为FLAC文件添加元数据: {file_path.name}")
             return True
             
         except Exception as e:
             logger.error(f"❌ 为FLAC文件添加元数据失败: {e}")
+            import traceback
+            logger.error(f"   详细错误: {traceback.format_exc()}")
             return False
     
     def _add_metadata_m4a_mutagen(
@@ -380,11 +441,17 @@ class MusicMetadataManager:
             
             # 保存标签
             audio_file.save()
+            
+            # 验证写入结果
+            self._verify_metadata_written(file_path, 'm4a', metadata, cover_data)
+            
             logger.info(f"✅ 成功为M4A文件添加元数据: {file_path.name}")
             return True
             
         except Exception as e:
             logger.error(f"❌ 为M4A文件添加元数据失败: {e}")
+            import traceback
+            logger.error(f"   详细错误: {traceback.format_exc()}")
             return False
     
     def _add_metadata_with_eyed3(
@@ -560,6 +627,87 @@ class MusicMetadataManager:
         except Exception as e:
             logger.warning(f"⚠️ 图片压缩失败: {e}")
             return None
+    
+    def _verify_metadata_written(
+        self,
+        file_path: Path,
+        file_type: str,
+        expected_metadata: Dict[str, str],
+        cover_data: Optional[bytes] = None
+    ) -> None:
+        """验证元数据是否正确写入文件
+        
+        Args:
+            file_path: 文件路径
+            file_type: 文件类型 (mp3/flac/m4a)
+            expected_metadata: 期望写入的元数据
+            cover_data: 封面数据
+        """
+        try:
+            from mutagen import File
+            
+            audio_file = File(str(file_path))
+            if audio_file is None:
+                logger.warning(f"⚠️ 验证失败：无法读取文件 {file_path.name}")
+                return
+            
+            # 读取写入后的元数据
+            actual_metadata = {}
+            has_cover = False
+            
+            if file_type == 'mp3':
+                tags = audio_file.tags
+                if tags:
+                    actual_metadata['title'] = str(tags.get('TIT2', [''])[0]) if tags.get('TIT2') else ''
+                    actual_metadata['artist'] = str(tags.get('TPE1', [''])[0]) if tags.get('TPE1') else ''
+                    actual_metadata['album'] = str(tags.get('TALB', [''])[0]) if tags.get('TALB') else ''
+                    actual_metadata['album_artist'] = str(tags.get('TPE2', [''])[0]) if tags.get('TPE2') else ''
+                    has_cover = 'APIC:Cover' in tags or any(k.startswith('APIC') for k in tags.keys())
+                    
+            elif file_type == 'flac':
+                actual_metadata['title'] = audio_file.get('TITLE', [''])[0] if audio_file.get('TITLE') else ''
+                actual_metadata['artist'] = audio_file.get('ARTIST', [''])[0] if audio_file.get('ARTIST') else ''
+                actual_metadata['album'] = audio_file.get('ALBUM', [''])[0] if audio_file.get('ALBUM') else ''
+                actual_metadata['album_artist'] = audio_file.get('ALBUMARTIST', [''])[0] if audio_file.get('ALBUMARTIST') else ''
+                has_cover = len(audio_file.pictures) > 0
+                
+            elif file_type == 'm4a':
+                actual_metadata['title'] = audio_file.get('\xa9nam', [''])[0] if audio_file.get('\xa9nam') else ''
+                actual_metadata['artist'] = audio_file.get('\xa9ART', [''])[0] if audio_file.get('\xa9ART') else ''
+                actual_metadata['album'] = audio_file.get('\xa9alb', [''])[0] if audio_file.get('\xa9alb') else ''
+                actual_metadata['album_artist'] = audio_file.get('aART', [''])[0] if audio_file.get('aART') else ''
+                has_cover = 'covr' in audio_file
+            
+            # 验证关键字段
+            verification_passed = True
+            issues = []
+            
+            for field in ['title', 'artist', 'album', 'album_artist']:
+                expected = expected_metadata.get(field, '')
+                actual = actual_metadata.get(field, '')
+                
+                if expected and not actual:
+                    issues.append(f"{field}:期望'{expected}',实际为空")
+                    verification_passed = False
+                elif expected and actual and expected != actual:
+                    issues.append(f"{field}:期望'{expected}',实际'{actual}'")
+                    verification_passed = False
+            
+            # 验证封面
+            if cover_data and not has_cover:
+                issues.append("封面:期望有,实际无")
+                verification_passed = False
+            
+            if verification_passed:
+                logger.info(f"✅ 元数据验证通过: {file_path.name}")
+                logger.info(f"   写入结果: title={actual_metadata.get('title', '无')}, artist={actual_metadata.get('artist', '无')}, album={actual_metadata.get('album', '无')}, album_artist={actual_metadata.get('album_artist', '无')}, 封面={'有' if has_cover else '无'}")
+            else:
+                logger.warning(f"⚠️ 元数据验证失败: {file_path.name}")
+                for issue in issues:
+                    logger.warning(f"   - {issue}")
+                    
+        except Exception as e:
+            logger.warning(f"⚠️ 元数据验证出错: {e}")
     
     def get_file_metadata(self, file_path: Union[str, Path]) -> Optional[Dict[str, str]]:
         """读取音乐文件的现有元数据"""

@@ -570,11 +570,14 @@ def delete_playlist(playlist_id: str):
     """删除订阅歌单"""
     try:
         platform = request.args.get('platform', 'netease')
+        # 支持删除本地文件选项（默认为 False，前端可传 delete_files=true）
+        delete_files = request.args.get('delete_files', 'false').lower() == 'true'
         
-        if config_manager.remove_subscribed_playlist(playlist_id, platform):
+        if config_manager.remove_subscribed_playlist(playlist_id, platform, delete_files):
+            message = '歌单已删除' + ('（包括本地文件）' if delete_files else '')
             return jsonify({
                 'success': True,
-                'message': '歌单已删除'
+                'message': message
             })
         else:
             return jsonify({'success': False, 'error': '删除失败'}), 500

@@ -1124,9 +1124,26 @@ class NeteaseDownloader(BaseDownloader):
         
         # 获取已下载的歌曲ID（从配置管理器）
         downloaded_song_ids = set()
+        downloaded_records = []
         if self.config_manager:
             downloaded_records = self.config_manager.get_playlist_songs(playlist_id, downloaded_only=True)
             downloaded_song_ids = {record['song_id'] for record in downloaded_records}
+        
+        # 当前歌单中的所有歌曲ID
+        current_song_ids = {song['id'] for song in songs}
+        
+        # 找出需要删除的歌曲（本地有但歌单中已移除）
+        removed_song_ids = downloaded_song_ids - current_song_ids
+        if removed_song_ids:
+            logger.info(f"🗑️ 检测到 {len(removed_song_ids)} 首歌曲已从歌单中移除，准备删除本地文件")
+            for removed_id in removed_song_ids:
+                # 从数据库记录中查找歌曲信息
+                removed_song_info = next((r for r in downloaded_records if r['song_id'] == removed_id), None)
+                if removed_song_info:
+                    self._delete_song_file(download_dir, removed_song_info)
+                # 从数据库中删除记录
+                if self.config_manager:
+                    self.config_manager.remove_playlist_song(playlist_id, removed_id)
         
         # 找出新增歌曲
         new_songs = []
@@ -1672,6 +1689,74 @@ class NeteaseDownloader(BaseDownloader):
         path = self.dir_format.replace('{ArtistName}', self.clean_filename(song_info.get('artist', 'Unknown')))
         path = path.replace('{AlbumName}', self.clean_filename(song_info.get('album', 'Unknown')))
         return os.path.join(base_dir, path)
+    
+    def _delete_song_file(self, download_dir: str, song_info: Dict) -> bool:
+        """删除歌曲文件及相关文件（歌词、封面）
+        
+        Args:
+            download_dir: 下载目录
+            song_info: 歌曲信息字典（包含 song_name, artist, album 等）
+        
+        Returns:
+            是否成功删除
+        """
+        try:
+            # 构建歌曲文件路径
+            song_name = song_info.get('song_name', '')
+            artist = song_info.get('artist', '')
+            album = song_info.get('album', '')
+            
+            if not song_name:
+                logger.warning(f"⚠️ 歌曲信息不完整，无法删除文件")
+                return False
+            
+            # 构建文件可能所在的目录
+            save_dir = self._build_directory(download_dir, {
+                'name': song_name,
+                'artist': artist,
+                'album': album
+            })
+            
+            # 构建可能的文件名模式
+            clean_name = self.clean_filename(song_name)
+            clean_artist = self.clean_filename(artist)
+            
+            deleted_files = []
+            file_patterns = [
+                f"{clean_name}.*",  # 歌曲名
+                f"{clean_name} - {clean_artist}.*",  # 歌曲名 - 艺术家
+                f"{clean_artist} - {clean_name}.*",  # 艺术家 - 歌曲名
+            ]
+            
+            from pathlib import Path
+            save_path = Path(save_dir)
+            
+            if save_path.exists():
+                # 搜索并删除匹配的文件
+                for pattern in file_patterns:
+                    for file_path in save_path.glob(pattern):
+                        try:
+                            file_path.unlink()
+                            deleted_files.append(str(file_path))
+                            logger.info(f"🗑️ 已删除文件: {file_path.name}")
+                        except Exception as e:
+                            logger.error(f"❌ 删除文件失败 {file_path}: {e}")
+                
+                if deleted_files:
+                    logger.info(f"✅ 成功删除 {len(deleted_files)} 个文件（{song_name}）")
+                    return True
+                else:
+                    logger.warning(f"⚠️ 未找到匹配的文件: {song_name}")
+                    return False
+            else:
+                logger.warning(f"⚠️ 目录不存在: {save_dir}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ 删除歌曲文件失败: {e}")
+            import traceback
+            logger.error(f"   详细错误: {traceback.format_exc()}")
+            return False
     
     def _download_file(self, url: str, filepath: str,
                       progress_callback: Optional[Callable] = None,

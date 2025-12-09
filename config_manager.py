@@ -517,9 +517,35 @@ class ConfigManager:
             logger.error(f"❌ 添加订阅歌单失败: {e}")
             return False
     
-    def remove_subscribed_playlist(self, playlist_id: str, platform: str = 'netease') -> bool:
-        """移除订阅歌单"""
+    def get_playlist_download_dir(self, playlist_id: str, platform: str = 'netease') -> str:
+        """获取歌单的下载目录"""
         try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT download_dir FROM subscribed_playlists
+                    WHERE platform = ? AND playlist_id = ?
+                """, (platform, playlist_id))
+                row = cursor.fetchone()
+                return row[0] if row else None
+        except Exception as e:
+            logger.error(f"❌ 获取歌单下载目录失败: {e}")
+            return None
+    
+    def remove_subscribed_playlist(self, playlist_id: str, platform: str = 'netease', delete_files: bool = False) -> bool:
+        """移除订阅歌单
+        
+        Args:
+            playlist_id: 歌单ID
+            platform: 平台
+            delete_files: 是否同时删除本地文件
+        """
+        try:
+            # 如果需要删除文件，先获取下载目录
+            download_dir = None
+            if delete_files:
+                download_dir = self.get_playlist_download_dir(playlist_id, platform)
+            
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
@@ -532,9 +558,32 @@ class ConfigManager:
                 """, (playlist_id,))
                 conn.commit()
                 logger.info(f"✅ 移除订阅歌单: {playlist_id}")
-                return True
+            
+            # 删除本地文件
+            if delete_files and download_dir:
+                self._delete_playlist_files(download_dir)
+            
+            return True
         except Exception as e:
             logger.error(f"❌ 移除订阅歌单失败: {e}")
+            return False
+    
+    def _delete_playlist_files(self, download_dir: str) -> bool:
+        """删除歌单的本地文件"""
+        import shutil
+        from pathlib import Path
+        
+        try:
+            path = Path(download_dir)
+            if path.exists() and path.is_dir():
+                shutil.rmtree(path)
+                logger.info(f"🗑️ 已删除歌单目录: {download_dir}")
+                return True
+            else:
+                logger.warning(f"⚠️ 歌单目录不存在: {download_dir}")
+                return False
+        except Exception as e:
+            logger.error(f"❌ 删除歌单文件失败: {e}")
             return False
     
     def get_subscribed_playlists(self, platform: str = None, enabled_only: bool = False) -> List[Dict[str, Any]]:
@@ -732,6 +781,22 @@ class ConfigManager:
                 return True
         except Exception as e:
             logger.error(f"❌ 标记歌曲失败状态失败: {e}")
+            return False
+    
+    def remove_playlist_song(self, playlist_id: str, song_id: str) -> bool:
+        """从歌单中移除歌曲记录"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    DELETE FROM playlist_songs 
+                    WHERE playlist_id = ? AND song_id = ?
+                """, (playlist_id, song_id))
+                conn.commit()
+                logger.debug(f"✅ 移除歌曲记录: {song_id} from playlist {playlist_id}")
+                return True
+        except Exception as e:
+            logger.error(f"❌ 移除歌曲记录失败: {e}")
             return False
     
     def get_failed_songs(self, playlist_id: str) -> List[Dict[str, Any]]:

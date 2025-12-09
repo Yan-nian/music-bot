@@ -1145,24 +1145,51 @@ class NeteaseDownloader(BaseDownloader):
                 if self.config_manager:
                     self.config_manager.remove_playlist_song(playlist_id, removed_id)
         
-        # 找出新增歌曲
+        # 获取所有失败记录（包括未下载的）
+        all_records = []
+        if self.config_manager:
+            all_records = self.config_manager.get_playlist_songs(playlist_id, downloaded_only=False)
+        all_song_ids = {record['song_id'] for record in all_records}
+        
+        # 找出新增歌曲和需要重试的歌曲
         new_songs = []
+        skipped_permanent_fails = 0
+        
         for song in songs:
             song_id = song['id']
-            if song_id not in downloaded_song_ids:
-                new_songs.append(song)
-                # 记录到数据库（标记为未下载）
-                if self.config_manager:
-                    self.config_manager.add_playlist_song(
-                        playlist_id=playlist_id,
-                        song_id=song_id,
-                        song_name=song.get('name'),
-                        artist=song.get('artist'),
-                        album=song.get('album'),
-                        downloaded=False
-                    )
+            
+            # 已下载成功的歌曲，跳过
+            if song_id in downloaded_song_ids:
+                continue
+            
+            # 检查是否是永久性失败的歌曲
+            if song_id in all_song_ids:
+                if self.config_manager and self.config_manager.is_song_permanently_failed(playlist_id, song_id):
+                    skipped_permanent_fails += 1
+                    logger.info(f"⏭️ 跳过永久性失败歌曲: {song.get('name')} - {song.get('artist')}")
+                    continue
+                else:
+                    # 可以重试的失败歌曲
+                    logger.info(f"🔄 重试下载失败歌曲: {song.get('name')} - {song.get('artist')}")
+            
+            # 新歌曲或可重试的失败歌曲
+            new_songs.append(song)
+            
+            # 如果是新歌曲，记录到数据库
+            if song_id not in all_song_ids and self.config_manager:
+                self.config_manager.add_playlist_song(
+                    playlist_id=playlist_id,
+                    song_id=song_id,
+                    song_name=song.get('name'),
+                    artist=song.get('artist'),
+                    album=song.get('album'),
+                    downloaded=False
+                )
         
-        logger.info(f"📋 歌单 '{playlist_name}' 共 {len(songs)} 首，新增 {len(new_songs)} 首")
+        if skipped_permanent_fails > 0:
+            logger.info(f"📋 歌单 '{playlist_name}' 共 {len(songs)} 首，需下载 {len(new_songs)} 首，跳过永久性失败 {skipped_permanent_fails} 首")
+        else:
+            logger.info(f"📋 歌单 '{playlist_name}' 共 {len(songs)} 首，需下载 {len(new_songs)} 首")
         
         results = {
             'success': True,
@@ -1172,6 +1199,7 @@ class NeteaseDownloader(BaseDownloader):
             'new_songs': len(new_songs),
             'downloaded_songs': 0,
             'skipped_songs': len(songs) - len(new_songs),
+            'skipped_permanent_fails': skipped_permanent_fails,
             'songs': [],
             'quality_name': self.quality,
             'bitrate': '未知',

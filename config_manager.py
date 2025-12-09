@@ -799,6 +799,54 @@ class ConfigManager:
             logger.error(f"❌ 移除歌曲记录失败: {e}")
             return False
     
+    def is_song_permanently_failed(self, playlist_id: str, song_id: str) -> bool:
+        """检查歌曲是否因永久性原因失败（版权、VIP等）
+        
+        Returns:
+            True: 永久性失败，不应重试
+            False: 可以重试
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT fail_reason, retry_count FROM playlist_songs 
+                    WHERE playlist_id = ? AND song_id = ? AND downloaded = 0
+                """, (playlist_id, song_id))
+                row = cursor.fetchone()
+                
+                if not row or not row[0]:
+                    return False
+                
+                fail_reason = row[0].lower()
+                retry_count = row[1] or 0
+                
+                # 永久性失败的关键词
+                permanent_keywords = [
+                    '版权', 'copyright', 
+                    'vip', '会员',
+                    '付费', 'paid',
+                    '下架', 'unavailable',
+                    '无法获取下载链接',
+                    '不可用', 'not available'
+                ]
+                
+                # 检查是否包含永久性失败关键词
+                if any(keyword in fail_reason for keyword in permanent_keywords):
+                    logger.debug(f"⏭️ 歌曲 {song_id} 因永久性原因跳过: {row[0]}")
+                    return True
+                
+                # 重试次数过多（超过3次）也视为永久性失败
+                if retry_count >= 3:
+                    logger.debug(f"⏭️ 歌曲 {song_id} 重试次数过多({retry_count}次)，跳过")
+                    return True
+                
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ 检查歌曲失败状态失败: {e}")
+            return False
+    
     def get_failed_songs(self, playlist_id: str) -> List[Dict[str, Any]]:
         """获取歌单中下载失败的歌曲"""
         try:

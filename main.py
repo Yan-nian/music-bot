@@ -203,6 +203,31 @@ class MusicBot:
         }
         return platform_paths.get(platform, self.download_path)
     
+    async def _safe_handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """带超时保护的消息处理包装器"""
+        try:
+            # 设置消息处理超时（30分钟，足够长的下载时间）
+            await asyncio.wait_for(
+                self.handle_message(update, context),
+                timeout=1800  # 30 分钟超时
+            )
+        except asyncio.TimeoutError:
+            logger.error("❌ 消息处理超时 (超过30分钟)")
+            if update.message:
+                try:
+                    await update.message.reply_text("❌ 处理超时，请重试")
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.error(f"❌ 消息处理异常: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            if update.message:
+                try:
+                    await update.message.reply_text(f"❌ 处理出错: {str(e)[:100]}")
+                except Exception:
+                    pass
+
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理消息"""
         if not update.message or not update.message.text:
@@ -651,7 +676,7 @@ class MusicBot:
         self.app.add_handler(CommandHandler('status', self.handle_status))
         self.app.add_handler(CommandHandler('history', self.handle_history))
         self.app.add_handler(CallbackQueryHandler(self.handle_callback_query))
-        self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
+        self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._safe_handle_message))
         
         logger.info("🤖 Telegram Bot 启动中...")
         
@@ -711,9 +736,12 @@ class MusicBot:
     async def _health_check_loop(self):
         """Bot 健康检查循环 - 定期检测连接状态"""
         logger.info("💓 Bot 健康检查服务已启动")
-        check_interval = 300  # 每 5 分钟检查一次
+        check_interval = 120  # 每 2 分钟检查一次（从 5 分钟缩短）
         consecutive_failures = 0
-        max_failures = 3  # 连续失败 3 次才重连
+        max_failures = 2  # 连续失败 2 次就重连（从 3 次减少）
+        
+        # 用于追踪上次成功处理消息的时间
+        self._last_message_time = time.time()
         
         while True:
             try:
@@ -739,10 +767,22 @@ class MusicBot:
                         try:
                             bot_info = await asyncio.wait_for(
                                 self.app.bot.get_me(),
-                                timeout=30  # 30 秒超时
+                                timeout=15  # 15 秒超时（从 30 秒缩短）
                             )
                             logger.info(f"💓 Bot 健康检查通过: @{bot_info.username}, Updater 运行中")
                             consecutive_failures = 0  # 重置失败计数
+                            
+                            # 额外检查：尝试获取 updates 以确保连接真正可用
+                            try:
+                                # 这会检测是否能真正从 Telegram 服务器获取数据
+                                await asyncio.wait_for(
+                                    self.app.bot.get_updates(limit=1, timeout=5),
+                                    timeout=10
+                                )
+                            except Exception as update_err:
+                                # 这个失败可能是正常的（因为 polling 正在运行），不一定表示问题
+                                logger.debug(f"💓 Get updates 检查: {update_err}")
+                                
                         except asyncio.TimeoutError:
                             logger.warning("⚠️ Bot 健康检查超时")
                             consecutive_failures += 1
@@ -767,7 +807,7 @@ class MusicBot:
     
     async def _reconnect_bot(self):
         """重新连接 Bot"""
-        max_reconnect_attempts = 3
+        max_reconnect_attempts = 5  # 增加重试次数
         
         for attempt in range(1, max_reconnect_attempts + 1):
             try:
@@ -777,16 +817,35 @@ class MusicBot:
                 if self.app and self.app.updater:
                     try:
                         if hasattr(self.app.updater, 'running') and self.app.updater.running:
-                            await self.app.updater.stop()
+                            await asyncio.wait_for(
+                                self.app.updater.stop(),
+                                timeout=10  # 添加停止超时
+                            )
                             logger.info("🔄 已停止旧的 updater")
+                    except asyncio.TimeoutError:
+                        logger.warning("⚠️ 停止 updater 超时，强制继续")
                     except Exception as e:
                         logger.warning(f"⚠️ 停止 updater 时出错: {e}")
                 
                 # 等待一段时间让连接完全关闭
-                await asyncio.sleep(5)
+                await asyncio.sleep(3)
+                
+                # 测试与 Telegram 的连接
+                try:
+                    await asyncio.wait_for(
+                        self.app.bot.get_me(),
+                        timeout=10
+                    )
+                    logger.info("🔄 与 Telegram 服务器连接正常")
+                except Exception as conn_err:
+                    logger.warning(f"⚠️ Telegram 连接测试失败: {conn_err}")
+                    # 仍然尝试重启 polling
                 
                 # 重新启动 polling
-                await self.app.updater.start_polling(drop_pending_updates=True)
+                await asyncio.wait_for(
+                    self.app.updater.start_polling(drop_pending_updates=True),
+                    timeout=30  # 添加启动超时
+                )
                 logger.info("✅ Telegram Bot 重新连接成功")
                 return  # 成功则退出
                 

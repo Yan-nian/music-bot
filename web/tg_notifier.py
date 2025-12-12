@@ -570,11 +570,21 @@ class TelegramNotifier:
             return
         
         try:
-            asyncio.run_coroutine_threadsafe(
+            # 使用 run_coroutine_threadsafe 并处理返回的 Future
+            future = asyncio.run_coroutine_threadsafe(
                 self._current_message.edit_text(text),
                 self._main_loop
             )
             self._last_update_time = current_time
+            
+            # 添加回调来处理结果，避免 Future 泄漏
+            def on_complete(f):
+                try:
+                    f.result(timeout=0)  # 不阻塞，只是消费结果
+                except Exception:
+                    pass  # 忽略错误，已在日志中记录
+            
+            future.add_done_callback(on_complete)
         except Exception as e:
             logger.debug(f"同步更新消息失败: {e}")
     

@@ -88,6 +88,9 @@ class NeteaseDownloader(BaseDownloader):
         # 加载 cookies
         self._load_cookies()
         
+        # 检查 cookies 有效性
+        self._check_login_status()
+        
         # 初始化音乐元数据管理器
         if METADATA_AVAILABLE:
             try:
@@ -164,9 +167,45 @@ class NeteaseDownloader(BaseDownloader):
                         name, value = cookie.strip().split('=', 1)
                         self.session.cookies.set(name.strip(), value.strip(), domain='.music.163.com')
             
-            logger.info(f"✅ 已加载 {len(self.session.cookies)} 个 cookies")
+            # 检查关键 cookie 是否存在
+            cookie_names = [c.name for c in self.session.cookies]
+            has_music_u = 'MUSIC_U' in cookie_names
+            logger.info(f"✅ 已加载 {len(self.session.cookies)} 个 cookies (MUSIC_U: {'有' if has_music_u else '无'})")
+            if not has_music_u:
+                logger.warning("⚠️ 缺少关键 cookie MUSIC_U，可能无法下载付费/VIP 歌曲")
         except Exception as e:
             logger.error(f"❌ 解析 cookies 失败: {e}")
+    
+    def _check_login_status(self):
+        """检查登录状态和 cookies 有效性"""
+        try:
+            url = f"{self.api_url}/api/login/status"
+            response = self.session.get(url, timeout=10)
+            data = response.json()
+            
+            if data.get('code') == 200:
+                profile = data.get('profile')
+                if profile:
+                    nickname = profile.get('nickname', '未知')
+                    vip_type = profile.get('vipType', 0)
+                    vip_str = '黑胶VIP' if vip_type == 11 else ('普通VIP' if vip_type > 0 else '普通用户')
+                    logger.info(f"✅ 网易云登录状态有效: {nickname} ({vip_str})")
+                    self.logged_in = True
+                    self.user_info = profile
+                    return True
+                else:
+                    logger.warning("⚠️ 网易云 cookies 已失效，需要重新登录获取 cookies")
+                    self.logged_in = False
+                    self.user_info = None
+            else:
+                logger.warning(f"⚠️ 检查登录状态失败: {data.get('msg', '未知错误')}")
+                self.logged_in = False
+                
+        except Exception as e:
+            logger.debug(f"检查登录状态时出错: {e}")
+            self.logged_in = False
+        
+        return False
 
     # ============ URL 解析 ============
     
@@ -431,10 +470,11 @@ class NeteaseDownloader(BaseDownloader):
             if data.get('code') == 200 and data.get('data'):
                 song_data = data['data'][0]
                 music_url = song_data.get('url')
+                song_code = song_data.get('code', 0)  # 歌曲级别的状态码
                 
                 if music_url:
                     file_format = self._extract_format_from_url(music_url)
-                    logger.info(f"✅ 获取音乐链接成功: {song_id}, 格式: {file_format}")
+                    logger.info(f"✅ 获取音乐链接成功: {song_id}, 格式: {file_format}, 码率: {song_data.get('br', 0)}")
                     return {
                         'url': music_url,
                         'size': song_data.get('size', 0),
@@ -442,7 +482,22 @@ class NeteaseDownloader(BaseDownloader):
                         'br': song_data.get('br', 0),
                     }
                 else:
-                    logger.warning(f"⚠️ 音乐链接为空，可能需要 VIP 或版权限制: {song_id}")
+                    # 详细的失败原因分析
+                    fee = song_data.get('fee', 0)  # 0=免费, 1=VIP, 4=购买专辑, 8=低音质免费
+                    payed = song_data.get('payed', 0)  # 是否已购买
+                    
+                    if song_code == -110:
+                        logger.warning(f"⚠️ 歌曲 {song_id} 需要 VIP 权限 (fee={fee}, payed={payed})")
+                    elif song_code == 404:
+                        logger.warning(f"⚠️ 歌曲 {song_id} 不存在或已下架")
+                    elif fee == 1 and not payed:
+                        logger.warning(f"⚠️ 歌曲 {song_id} 需要 VIP 订阅 (fee={fee})")
+                    elif fee == 4 and not payed:
+                        logger.warning(f"⚠️ 歌曲 {song_id} 需要购买专辑 (fee={fee})")
+                    else:
+                        logger.warning(f"⚠️ 歌曲 {song_id} 链接为空 (code={song_code}, fee={fee}, payed={payed}) - 请检查 cookies 是否有效")
+            else:
+                logger.warning(f"⚠️ API 返回异常: code={data.get('code')}, msg={data.get('msg', '无')}")
             
             return None
             

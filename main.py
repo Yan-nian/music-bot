@@ -151,6 +151,7 @@ class MusicBot:
             "/start - 显示帮助\n"
             "/status - 查看状态\n"
             "/history - 查看下载历史\n"
+            "/cookie - 更新网易云 cookies\n"
         )
         await update.message.reply_text(welcome_msg, parse_mode=ParseMode.MARKDOWN)
     
@@ -193,6 +194,127 @@ class MusicBot:
             lines.append(f"   🕐 {created_at}\n")
         
         await update.message.reply_text('\n'.join(lines), parse_mode=ParseMode.MARKDOWN)
+
+    async def handle_cookie(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理 /cookie 命令 - 更新网易云 cookies"""
+        user = update.message.from_user
+        logger.info(f"📨 收到 /cookie 命令: 用户={user.id}({user.username})")
+        
+        # 检查用户权限
+        if not self.check_allowed_user(user.id):
+            await update.message.reply_text("⚠️ 您没有权限使用此命令")
+            return
+        
+        # 获取参数
+        args = context.args if context.args else []
+        
+        if not args:
+            # 没有参数，显示使用说明和当前状态
+            current_cookies = self.config.get('netease_cookies', '')
+            has_cookies = bool(current_cookies)
+            
+            # 检查登录状态
+            login_status = "未知"
+            if 'netease' in self.downloaders:
+                downloader = self.downloaders['netease']
+                if hasattr(downloader, 'logged_in') and downloader.logged_in:
+                    nickname = getattr(downloader, 'user_info', {}).get('nickname', '未知')
+                    login_status = f"✅ 已登录 ({nickname})"
+                elif has_cookies:
+                    login_status = "⚠️ cookies 可能已失效"
+                else:
+                    login_status = "❌ 未配置 cookies"
+            
+            msg = (
+                "🍪 *网易云 Cookie 管理*\n\n"
+                f"*当前状态:* {login_status}\n"
+                f"*Cookies:* {'已配置' if has_cookies else '未配置'}\n\n"
+                "*使用方法:*\n"
+                "`/cookie <cookies字符串>`\n\n"
+                "*如何获取 Cookies:*\n"
+                "1. 打开 music.163.com 并登录\n"
+                "2. 按 F12 打开开发者工具\n"
+                "3. 切换到 Application/存储 标签\n"
+                "4. 找到 Cookies → music.163.com\n"
+                "5. 复制 `MUSIC_U` 的值\n"
+                "6. 发送: `/cookie MUSIC_U=你的值`\n\n"
+                "*或者复制完整 cookies:*\n"
+                "在 Console 中执行 `document.cookie` 并复制结果"
+            )
+            await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+            return
+        
+        # 有参数，更新 cookies
+        new_cookies = ' '.join(args)
+        
+        # 验证 cookies 格式
+        if '=' not in new_cookies and not new_cookies.startswith('{'):
+            await update.message.reply_text(
+                "❌ *Cookies 格式错误*\n\n"
+                "正确格式示例:\n"
+                "• `MUSIC_U=xxx; __csrf=xxx`\n"
+                "• `{\"MUSIC_U\": \"xxx\"}`",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+        
+        # 保存 cookies
+        try:
+            self.config_manager.set_config('netease_cookies', new_cookies)
+            
+            # 更新当前配置
+            self.config['netease_cookies'] = new_cookies
+            
+            # 重新初始化网易云下载器以加载新 cookies
+            if 'netease' in self.downloaders:
+                try:
+                    self.downloaders['netease'] = NeteaseDownloader(self.config_manager)
+                    downloader = self.downloaders['netease']
+                    
+                    # 检查新的登录状态
+                    if hasattr(downloader, 'logged_in') and downloader.logged_in:
+                        nickname = getattr(downloader, 'user_info', {}).get('nickname', '未知')
+                        vip_type = getattr(downloader, 'user_info', {}).get('vipType', 0)
+                        vip_str = '黑胶VIP' if vip_type == 11 else ('普通VIP' if vip_type > 0 else '普通用户')
+                        
+                        await update.message.reply_text(
+                            f"✅ *Cookies 更新成功！*\n\n"
+                            f"👤 用户: {nickname}\n"
+                            f"💎 会员: {vip_str}",
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                        logger.info(f"✅ 用户 {user.id} 更新了网易云 cookies，登录用户: {nickname}")
+                    else:
+                        await update.message.reply_text(
+                            "⚠️ *Cookies 已保存，但验证失败*\n\n"
+                            "可能原因:\n"
+                            "• Cookies 已过期\n"
+                            "• 格式不正确\n"
+                            "• 网络问题\n\n"
+                            "请检查 cookies 是否正确",
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                        logger.warning(f"⚠️ 用户 {user.id} 更新了 cookies，但验证失败")
+                except Exception as e:
+                    logger.error(f"❌ 重新初始化网易云下载器失败: {e}")
+                    await update.message.reply_text(
+                        f"⚠️ *Cookies 已保存，但下载器重新加载失败*\n\n"
+                        f"错误: {str(e)[:100]}",
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+            else:
+                await update.message.reply_text(
+                    "✅ *Cookies 已保存*\n\n"
+                    "⚠️ 网易云下载器未启用，请在设置中启用",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                
+        except Exception as e:
+            logger.error(f"❌ 保存 cookies 失败: {e}")
+            await update.message.reply_text(
+                f"❌ *保存失败*\n\n错误: {str(e)[:100]}",
+                parse_mode=ParseMode.MARKDOWN
+            )
 
     def get_download_path_for_platform(self, platform: str) -> str:
         """获取平台专属的下载路径"""
@@ -675,6 +797,7 @@ class MusicBot:
         self.app.add_handler(CommandHandler('help', self.handle_start))
         self.app.add_handler(CommandHandler('status', self.handle_status))
         self.app.add_handler(CommandHandler('history', self.handle_history))
+        self.app.add_handler(CommandHandler('cookie', self.handle_cookie))
         self.app.add_handler(CallbackQueryHandler(self.handle_callback_query))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._safe_handle_message))
         

@@ -411,7 +411,8 @@
             const platform = document.getElementById('platformFilter').value;
             
             filteredHistory = allHistory.filter(item => {
-                if (search && !item.name.toLowerCase().includes(search)) return false;
+                const title = (item.title || '').toLowerCase();
+                if (search && !title.includes(search)) return false;
                 if (status && item.status !== status) return false;
                 if (platform && item.platform !== platform) return false;
                 return true;
@@ -443,20 +444,20 @@
                 pageData.forEach(item => {
                     const row = document.createElement('tr');
                     row.innerHTML = `
-                        <td>${formatDate(item.timestamp)}</td>
+                        <td>${formatDate(item.created_at)}</td>
                         <td>
                             <span style="font-size: 1.2rem;">${item.platform === 'netease' ? '🎵' : '🍎'}</span>
                             ${item.platform}
                         </td>
-                        <td>${item.type === 'song' ? '🎶 单曲' : item.type === 'album' ? '💿 专辑' : '📀 歌单'}</td>
-                        <td style="font-weight: 500; color: var(--text-primary);">${item.name}</td>
+                        <td>${item.content_type === 'song' ? '🎶 单曲' : item.content_type === 'album' ? '💿 专辑' : '📀 歌单'}</td>
+                        <td style="font-weight: 500; color: var(--text-primary);">${item.title || '未知'}</td>
                         <td>
                             <span class="status-badge ${item.status}">
-                                ${item.status === 'success' ? '✅' : '❌'}
-                                ${item.status === 'success' ? '成功' : '失败'}
+                                ${item.status === 'completed' ? '✅' : '❌'}
+                                ${item.status === 'completed' ? '成功' : '失败'}
                             </span>
                         </td>
-                        <td>${item.size || '-'}</td>
+                        <td>${formatFileSize(item.file_size)}</td>
                         <td>
                             <button class="btn btn-ghost" style="padding: 4px 8px; font-size: 0.8rem;" onclick="viewDetail('${item.id}')">查看</button>
                             <button class="btn btn-ghost" style="padding: 4px 8px; font-size: 0.8rem;" onclick="redownload('${item.id}')">重下</button>
@@ -494,17 +495,28 @@
             filterHistory();
         }
         
+        // 格式化文件大小
+        function formatFileSize(bytes) {
+            if (bytes === null || bytes === undefined || bytes === '') return '-';
+            const size = parseInt(bytes);
+            if (isNaN(size) || size <= 0) return '-';
+            if (size < 1024) return size + ' B';
+            if (size < 1024 * 1024) return (size / 1024).toFixed(1) + ' KB';
+            if (size < 1024 * 1024 * 1024) return (size / (1024 * 1024)).toFixed(1) + ' MB';
+            return (size / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+        }
+        
         // 导出历史
         function exportHistory() {
             const csv = [
                 ['时间', '平台', '类型', '名称', '状态', '大小'].join(','),
                 ...filteredHistory.map(item => [
-                    formatDate(item.timestamp),
+                    formatDate(item.created_at),
                     item.platform,
-                    item.type,
-                    item.name,
+                    item.content_type,
+                    item.title || '',
                     item.status,
-                    item.size || ''
+                    item.file_size || ''
                 ].join(','))
             ].join('\n');
             

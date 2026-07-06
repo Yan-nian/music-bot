@@ -338,7 +338,9 @@
                 const result = await response.json();
                 
                 if (result.success) {
-                    allLogs = result.data;
+                    const payload = result.data || {};
+                    allLogs = payload.logs || [];
+                    document.getElementById('logCount').textContent = payload.total || allLogs.length;
                     filterLogs();
                 }
             } catch (error) {

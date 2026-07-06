@@ -480,21 +480,23 @@
             grid.innerHTML = '';
             
             playlists.forEach(playlist => {
+                const songCount = playlist.stats ? playlist.stats.total : (playlist.last_song_count || 0);
+                const syncCount = playlist.total_downloaded || 0;
                 const card = document.createElement('div');
                 card.className = 'playlist-card';
                 card.innerHTML = `
                     <div class="playlist-icon">${playlist.platform === 'netease' ? '🎵' : '🍎'}</div>
-                    <div class="playlist-name">${playlist.name || '未命名歌单'}</div>
+                    <div class="playlist-name">${playlist.playlist_name || '未命名歌单'}</div>
                     <div class="playlist-meta">
-                        <span>📊 ${playlist.song_count || 0} 首</span>
-                        <span>🔄 ${playlist.sync_count || 0} 次同步</span>
+                        <span>📊 ${songCount} 首</span>
+                        <span>🔄 ${syncCount} 次同步</span>
                     </div>
                     <div style="font-size: 0.8rem; color: var(--text-tertiary); margin-bottom: 8px;">
-                        上次同步: ${playlist.last_sync ? formatDate(playlist.last_sync) : '从未'}
+                        上次同步: ${playlist.last_check_time ? formatDate(playlist.last_check_time) : '从未'}
                     </div>
                     <div class="playlist-actions">
-                        <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.85rem;" onclick="syncPlaylist('${playlist.id}')">🔄 同步</button>
-                        <button class="btn btn-danger" style="padding: 6px 12px; font-size: 0.85rem;" onclick="deletePlaylist('${playlist.id}')">🗑️ 删除</button>
+                        <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.85rem;" onclick="syncPlaylist('${playlist.playlist_id}')">🔄 同步</button>
+                        <button class="btn btn-danger" style="padding: 6px 12px; font-size: 0.85rem;" onclick="deletePlaylist('${playlist.playlist_id}')">🗑️ 删除</button>
                     </div>
                 `;
                 grid.appendChild(card);
@@ -517,8 +519,6 @@
         async function addPlaylist() {
             const platform = document.getElementById('platformSelect').value;
             const url = document.getElementById('playlistUrl').value;
-            const path = document.getElementById('playlistPath').value;
-            const autoDownload = document.getElementById('autoDownload').checked;
             
             if (!url) {
                 alert('请输入歌单链接或 ID');
@@ -531,9 +531,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         platform: platform,
-                        url: url,
-                        download_path: path,
-                        auto_download: autoDownload
+                        playlist_url: url
                     })
                 });
                 

@@ -1177,55 +1177,6 @@ def logout():
     return redirect(url_for('login'))
 
 
-@app.route('/')
-@login_required
-def index():
-    """主页"""
-    return render_template('index.html')
-
-
-@app.route('/settings')
-@login_required
-def settings():
-    """设置页面（配置已整合在主页，重定向避免模板缺失 500）"""
-    return redirect(url_for('index'))
-
-
-@app.route('/history')
-@login_required
-def history():
-    """下载历史（暂未独立页面，回到主页）"""
-    return redirect(url_for('index'))
-
-
-@app.route('/setup')
-@login_required
-def setup():
-    """Telegram 设置页面"""
-    return render_template('setup.html')
-
-
-@app.route('/account')
-@login_required
-def account():
-    """账号管理页面"""
-    return render_template('account.html')
-
-
-@app.route('/playlists')
-@login_required
-def playlists():
-    """歌单订阅管理页面"""
-    return render_template('playlists.html')
-
-
-@app.route('/logs')
-@login_required
-def logs():
-    """日志查看页面"""
-    return render_template('logs.html')
-
-
 # ==================== 静态文件 ====================
 
 @app.route('/static/<path:filename>')

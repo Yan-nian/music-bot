@@ -50,6 +50,9 @@ from web.tg_notifier import (
     DownloadType, ProgressInfo, DownloadResult
 )
 
+# 导入下载队列
+from download_queue import get_download_queue, DownloadTask, TaskStatus
+
 # Telegram 相关导入
 try:
     from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
@@ -88,6 +91,14 @@ class MusicBot:
 
         # 下载路径
         self.download_path = self.config.get('download_path', '/downloads')
+
+        # 下载队列（控制并发 + 重试）
+        max_concurrent = self._cfg('download_max_concurrent', 3)
+        self.download_queue = get_download_queue(max_concurrent=max_concurrent)
+        
+        # 下载重试配置
+        self.download_max_retries = self._cfg('download_max_retries', 3)
+        self.download_retry_delay_base = self._cfg('download_retry_delay_base', 2.0)
 
         logger.info(f"🎵 Music Bot v{BOT_VERSION} 初始化完成")
         self.download_path = self.config.get('download_path', '/downloads')
@@ -166,7 +177,44 @@ class MusicBot:
         if not self.downloaders:
             status_lines.append("• 暂无可用下载器")
         
+        # 下载队列状态
+        q = self.download_queue
+        qs = q.get_status()
+        status_lines.append(f"\n📥 *下载队列*")
+        status_lines.append(f"• 最大并发: {qs['max_concurrent']}")
+        status_lines.append(f"• 排队中: {qs['pending']}")
+        status_lines.append(f"• 执行中: {qs['active']}")
+        status_lines.append(f"• 已完成: {qs['completed']}")
+        status_lines.append(f"• 失败: {qs['failed']}")
+        
         await update.message.reply_text('\n'.join(status_lines), parse_mode=ParseMode.MARKDOWN)
+    
+    async def handle_queue(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理 /queue 命令 - 查看下载队列状态"""
+        user = update.message.from_user
+        if not self.check_allowed_user(user.id):
+            await update.message.reply_text("⚠️ 您没有权限使用此命令")
+            return
+        
+        qs = self.download_queue.get_status()
+        
+        lines = ["📥 *下载队列状态*\n"]
+        lines.append(f"最大并发: `{qs['max_concurrent']}`")
+        lines.append(f"排队中: `{qs['pending']}` | 执行中: `{qs['active']}`")
+        lines.append(f"已完成: `{qs['completed']}` | 失败: `{qs['failed']}`")
+        
+        tasks = qs.get('tasks', [])
+        if tasks:
+            lines.append("\n*最近任务:*")
+            for t in tasks[:10]:
+                status_icon = {'pending':'⏳','running':'▶️','retrying':'🔄','completed':'✅','failed':'❌'}.get(t['status'],'❓')
+                lines.append(f"{status_icon} `{t['platform']}/{t['content_type']}` `{t['content_id']}` — 重试:{t['retry_count']}/{t['max_retries']}")
+                if t['last_error']:
+                    lines.append(f"  _错误: {t['last_error'][:80]}_")
+        else:
+            lines.append("\n_暂无任务记录_")
+        
+        await update.message.reply_text('\n'.join(lines), parse_mode=ParseMode.MARKDOWN)
     
     async def handle_history(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理 /history 命令 - 显示下载历史"""
@@ -449,7 +497,9 @@ class MusicBot:
             return
     
     async def _do_download(self, message, downloader_name: str, downloader, content_type: str, content_id: str, is_redownload: bool = False):
-        """执行下载任务（使用通知模块）"""
+        """执行下载任务（通过下载队列，支持并发控制和重试）"""
+        import uuid
+        
         # 发送处理中消息
         start_msg = MessageTemplates.download_started(downloader_name, content_type, content_id, is_redownload)
         progress_msg = await message.reply_text(start_msg)
@@ -477,40 +527,67 @@ class MusicBot:
             # 创建进度回调
             progress_callback = task_notifier.create_progress_callback(download_type)
             
-            # 定义同步下载函数包装器
-            def run_download():
-                """在子线程中执行下载"""
-                try:
-                    # 重新加载配置与 cookies，使 Web 修改即时生效
-                    if hasattr(downloader, 'reload_config'):
-                        downloader.reload_config()
-                    if content_type == 'song':
-                        return downloader.download_song(
-                            content_id, download_dir, 
-                            progress_callback=progress_callback
-                        )
-                    elif content_type == 'album':
-                        return downloader.download_album(
-                            content_id, download_dir,
-                            progress_callback=progress_callback
-                        )
-                    elif content_type == 'playlist':
-                        return downloader.download_playlist(
-                            content_id, download_dir,
-                            progress_callback=progress_callback
-                        )
-                    else:
-                        return {'success': False, 'error': f'不支持的类型: {content_type}'}
-                except Exception as e:
-                    logger.error(f"下载线程异常: {e}")
-                    import traceback
-                    logger.error(traceback.format_exc())
-                    return {'success': False, 'error': str(e)}
+            # 定义异步下载函数（在线程中执行实际下载）
+            async def run_download_async():
+                """在线程池中执行下载（供队列调用）"""
+                def run_download():
+                    try:
+                        if hasattr(downloader, 'reload_config'):
+                            downloader.reload_config()
+                        if content_type == 'song':
+                            return downloader.download_song(
+                                content_id, download_dir,
+                                progress_callback=progress_callback
+                            )
+                        elif content_type == 'album':
+                            return downloader.download_album(
+                                content_id, download_dir,
+                                progress_callback=progress_callback
+                            )
+                        elif content_type == 'playlist':
+                            return downloader.download_playlist(
+                                content_id, download_dir,
+                                progress_callback=progress_callback
+                            )
+                        else:
+                            return {'success': False, 'error': f'不支持的类型: {content_type}'}
+                    except Exception as e:
+                        logger.error(f"下载线程异常: {e}")
+                        import traceback
+                        logger.error(traceback.format_exc())
+                        return {'success': False, 'error': str(e)}
+                
+                return await asyncio.to_thread(run_download)
             
-            # 在线程池中执行下载
-            logger.info(f"🚀 开始下载: {content_type} - {content_id}")
-            result = await asyncio.to_thread(run_download)
-            logger.info(f"✅ 下载完成，结果: {result.get('success', False)}")
+            # 创建下载任务
+            task_id = f"{downloader_name}_{content_id}_{uuid.uuid4().hex[:8]}"
+            task = DownloadTask(
+                task_id=task_id,
+                coroutine_func=run_download_async,
+                platform=downloader_name,
+                content_type=content_type,
+                content_id=content_id,
+                max_retries=self.download_max_retries,
+            )
+            
+            # 确保队列已启动
+            if not self.download_queue._running:
+                await self.download_queue.start()
+            
+            # 提交到队列并等待完成
+            self.download_queue.enqueue(task)
+            logger.info(f"🚀 任务已入队: {task_id}")
+            
+            try:
+                # 等待任务完成（无超时限制，由下载超时配置控制）
+                download_timeout = self._cfg('download_timeout', 600)
+                result = await asyncio.wait_for(task._future, timeout=download_timeout)
+            except asyncio.TimeoutError:
+                logger.error(f"⏱️ 下载超时: {task_id}")
+                result = {'success': False, 'error': f'下载超时（{download_timeout}s）'}
+            except Exception as e:
+                logger.error(f"❌ 下载任务异常: {e}")
+                result = {'success': False, 'error': str(e)}
             
             # 等待一小段时间，确保最后的进度更新完成
             await asyncio.sleep(0.5)
@@ -864,6 +941,7 @@ class MusicBot:
         app.add_handler(CommandHandler('status', self.handle_status))
         app.add_handler(CommandHandler('history', self.handle_history))
         app.add_handler(CommandHandler('cookie', self.handle_cookie))
+        app.add_handler(CommandHandler('queue', self.handle_queue))
         app.add_handler(CallbackQueryHandler(self.handle_callback_query))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._safe_handle_message))
 

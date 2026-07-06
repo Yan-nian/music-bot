@@ -80,6 +80,12 @@ class ConfigManager:
         "log_level": "INFO",
         "log_to_file": True,
         "log_to_console": True,
+        
+        # 下载队列配置
+        "download_max_concurrent": 3,      # 最大同时下载数
+        "download_max_retries": 3,         # 下载失败最大重试次数
+        "download_retry_delay_base": 2.0, # 重试延迟基数（秒，指数退避）
+        "download_timeout": 600,           # 单任务下载超时（秒）
     }
     
     def __init__(self, db_path: str = "/app/db/music_bot.db"):

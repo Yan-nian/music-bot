@@ -436,6 +436,34 @@
                     </div>
                 </div>
                 <div class="card">
+                    <div class="card-title">下载队列</div>
+                    <div class="card-desc">控制同时下载的任务数和失败重试行为。</div>
+                    <div class="grid-2">
+                        <div class="field">
+                            <label>最大并发下载数</label>
+                            <input type="number" id="download_max_concurrent" placeholder="3" min="1" max="10">
+                            <div class="hint">同时最多跑几个下载（推荐 2~4）</div>
+                        </div>
+                        <div class="field">
+                            <label>下载超时（秒）</label>
+                            <input type="number" id="download_timeout" placeholder="600" min="60">
+                            <div class="hint">单任务超过此时长强制失败</div>
+                        </div>
+                    </div>
+                    <div class="grid-2">
+                        <div class="field">
+                            <label>最大重试次数</label>
+                            <input type="number" id="download_max_retries" placeholder="3" min="0" max="10">
+                            <div class="hint">下载失败后最多重试几次（0=不重试）</div>
+                        </div>
+                        <div class="field">
+                            <label>重试延迟基数（秒）</label>
+                            <input type="number" id="download_retry_delay_base" placeholder="2" min="1" max="60" step="0.5">
+                            <div class="hint">指数退避基数，实际延迟 = 基数 × 2^(重试次数-1)</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card">
                     <div class="card-title">代理设置</div>
                     <div class="switch-row">
                         <div class="switch-text"><div class="switch-title">启用代理</div><div class="switch-sub">访问 Telegram / 海外服务时使用</div></div>
@@ -485,7 +513,7 @@
         telegram: ['telegram_bot_token', 'telegram_allowed_users', 'telegram_api_id', 'telegram_api_hash', 'telegram_session_string'],
         netease: ['netease_enabled', 'netease_download_path', 'netease_quality', 'netease_song_file_format', 'netease_dir_format', 'netease_album_folder_format', 'netease_download_lyrics', 'netease_download_cover', 'netease_lyrics_merge', 'netease_cookies'],
         apple: ['apple_music_enabled', 'apple_music_download_path', 'apple_music_quality', 'apple_music_region', 'apple_music_decrypt_host', 'apple_music_get_host', 'apple_music_download_lyrics', 'apple_music_download_cover', 'apple_music_cookies'],
-        general: ['download_path', 'send_to_telegram', 'proxy_enabled', 'proxy_host', 'log_level', 'log_to_file', 'log_to_console']
+        general: ['download_path', 'send_to_telegram', 'download_max_concurrent', 'download_max_retries', 'download_retry_delay_base', 'download_timeout', 'proxy_enabled', 'proxy_host', 'log_level', 'log_to_file', 'log_to_console']
     };
 
     // 敏感字段：后端以 ****** 掩码返回，前端不回填、留空不提交（保持原值）

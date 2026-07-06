@@ -1209,6 +1209,37 @@ def run_server(host: str = '0.0.0.0', port: int = 5000, debug: bool = False):
     app.run(host=host, port=port, debug=debug, threaded=True)
 
 
+# ==================== 下载队列 API ====================
+
+@app.route('/api/queue/status', methods=['GET'])
+@login_required
+def api_queue_status():
+    """获取下载队列状态"""
+    try:
+        from download_queue import get_download_queue
+        return jsonify({'success': True, 'data': get_download_queue().get_status()})
+    except Exception as e:
+        logger.error(f"获取队列状态失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/queue/config', methods=['POST'])
+@login_required
+def api_queue_config():
+    """更新队列配置（最大并发数）"""
+    try:
+        data = request.get_json() or {}
+        mc = data.get('max_concurrent')
+        if mc and isinstance(mc, int) and mc >= 1:
+            from download_queue import get_download_queue
+            get_download_queue().set_max_concurrent(mc)
+            return jsonify({'success': True, 'message': f'最大并发数已设为 {mc}'})
+        return jsonify({'success': False, 'error': 'invalid max_concurrent'}), 400
+    except Exception as e:
+        logger.error(f"更新队列配置失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     init_app()

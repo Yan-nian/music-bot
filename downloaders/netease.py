@@ -3,6 +3,8 @@
 """
 网易云音乐下载器
 使用官方 API 实现（参考原项目 renlixing87/savextube）
+
+已重构：将 API 调用拆分到 api.py
 """
 
 import os
@@ -15,6 +17,7 @@ from pathlib import Path
 from typing import Optional, Dict, List, Any, Callable
 
 from .base import BaseDownloader
+from .api import NeteaseAPI
 
 logger = logging.getLogger(__name__)
 
@@ -75,12 +78,15 @@ class NeteaseDownloader(BaseDownloader):
         
         # 设置请求头
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Referer': 'https://music.163.com/',
             'Accept': 'application/json, text/plain, */*',
             'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
             'Connection': 'keep-alive',
         })
+        
+        # 创建 API 实例
+        self.api = NeteaseAPI(self.session, self.api_url)
         
         # 加载配置
         self._load_config()
@@ -96,6 +102,7 @@ class NeteaseDownloader(BaseDownloader):
             try:
                 self.metadata_manager = MusicMetadataManager()
                 logger.info("✅ 音乐元数据管理器初始化成功")
+            except Exception as e:
                 logger.info(f"🔧 可用的音频标签库: {', '.join(self.metadata_manager.available_libraries) if self.metadata_manager.available_libraries else '无'}")
             except Exception as e:
                 logger.error(f"❌ 音乐元数据管理器初始化失败: {e}")
@@ -294,45 +301,8 @@ class NeteaseDownloader(BaseDownloader):
     # ============ 官方 API 调用 ============
     
     def search_songs(self, keyword: str, limit: int = 20) -> List[Dict[str, Any]]:
-        """搜索歌曲"""
-        try:
-            url = f"{self.api_url}/api/search/get/web"
-            params = {
-                'csrf_token': '',
-                's': keyword,
-                'type': '1',  # 1=歌曲, 10=专辑, 1000=歌单
-                'offset': '0',
-                'total': 'true',
-                'limit': str(limit)
-            }
-            
-            logger.info(f"🔍 搜索歌曲: {keyword}")
-            
-            response = self.session.get(url, params=params, timeout=15)
-            response.raise_for_status()
-            data = response.json()
-            
-            if data.get('code') == 200 and data.get('result'):
-                songs = data['result'].get('songs', [])
-                result = []
-                for song in songs:
-                    result.append({
-                        'id': str(song.get('id')),
-                        'name': song.get('name', 'Unknown'),
-                        'artist': ', '.join([a.get('name', '') for a in song.get('artists', [])]),
-                        'album': song.get('album', {}).get('name', 'Unknown'),
-                        'duration': song.get('duration', 0) // 1000,
-                        'cover': song.get('album', {}).get('picUrl', ''),
-                    })
-                logger.info(f"✅ 搜索到 {len(result)} 首歌曲")
-                return result
-            
-            logger.warning(f"⚠️ 搜索失败: {data.get('msg', '未知错误')}")
-            return []
-            
-        except Exception as e:
-            logger.error(f"❌ 搜索歌曲失败: {e}")
-            return []
+        """搜索歌曲 - 委托给 API 模块"""
+        return self.api.search_songs(keyword, limit)
     
     def get_song_info(self, song_id: str) -> Optional[Dict[str, Any]]:
         """获取歌曲详情"""

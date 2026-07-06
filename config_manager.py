@@ -3,6 +3,11 @@
 """
 SQLite 配置管理器 - 增强版
 支持 Web 配置管理和完整的配置项
+
+已重构：将不同职责拆分到 config/ 目录下的独立模块
+- config/playlist_manager.py: 歌单管理
+- config/history_manager.py: 下载历史
+- config/log_manager.py: 日志管理
 """
 
 import sqlite3
@@ -13,11 +18,22 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
+# 导入 Mixin 类
+from config.playlist_manager import PlaylistManager
+from config.history_manager import HistoryManager
+from config.log_manager import LogManager
+
 logger = logging.getLogger(__name__)
 
 
-class ConfigManager:
-    """配置管理器 - 使用 SQLite 存储配置"""
+class ConfigManager(PlaylistManager, HistoryManager, LogManager):
+    """配置管理器 - 使用 SQLite 存储配置
+    
+    通过多继承混入以下功能：
+    - PlaylistManager: 歌单订阅管理
+    - HistoryManager: 下载历史管理
+    - LogManager: 日志管理
+    """
     
     # 默认配置
     DEFAULT_CONFIG = {
@@ -29,13 +45,13 @@ class ConfigManager:
         "telegram_session_string": "",
         
         # Telegram 通知配置
-        "telegram_notify_enabled": True,         # 是否启用 TG 通知
-        "telegram_notify_progress": True,        # 是否发送进度通知
-        "telegram_notify_complete": True,        # 是否发送完成通知
-        "telegram_notify_error": True,           # 是否发送错误通知
-        "telegram_progress_interval": 1.0,       # 进度更新间隔（秒）
-        "telegram_send_file": False,             # 是否发送文件到 Telegram
-        "telegram_file_size_limit": 50,          # 发送文件大小限制（MB）
+        "telegram_notify_enabled": True,
+        "telegram_notify_progress": True,
+        "telegram_notify_complete": True,
+        "telegram_notify_error": True,
+        "telegram_progress_interval": 1.0,
+        "telegram_send_file": False,
+        "telegram_file_size_limit": 50,
         
         # 代理配置
         "proxy_enabled": False,
@@ -44,12 +60,12 @@ class ConfigManager:
         # 通用下载配置
         "download_path": "/downloads",
         "auto_download_enabled": True,
-        "send_to_telegram": False,  # 是否发送到 Telegram（旧配置，保留兼容）
+        "send_to_telegram": False,
         
         # 网易云音乐配置
         "netease_enabled": True,
-        "netease_download_path": "/downloads/netease",  # 网易云单独下载路径
-        "netease_quality": "无损",  # 标准/较高/极高/无损
+        "netease_download_path": "/downloads/netease",
+        "netease_quality": "无损",
         "netease_download_lyrics": True,
         "netease_download_cover": True,
         "netease_lyrics_merge": False,
@@ -60,8 +76,8 @@ class ConfigManager:
         
         # Apple Music 配置
         "apple_music_enabled": True,
-        "apple_music_download_path": "/downloads/apple_music",  # Apple Music 单独下载路径
-        "apple_music_quality": "lossless",  # aac/lossless/atmos
+        "apple_music_download_path": "/downloads/apple_music",
+        "apple_music_quality": "lossless",
         "apple_music_download_lyrics": True,
         "apple_music_download_cover": True,
         "apple_music_region": "cn",
@@ -82,10 +98,10 @@ class ConfigManager:
         "log_to_console": True,
         
         # 下载队列配置
-        "download_max_concurrent": 3,      # 最大同时下载数
-        "download_max_retries": 3,         # 下载失败最大重试次数
-        "download_retry_delay_base": 2.0, # 重试延迟基数（秒，指数退避）
-        "download_timeout": 600,           # 单任务下载超时（秒）
+        "download_max_concurrent": 3,
+        "download_max_retries": 3,
+        "download_retry_delay_base": 2.0,
+        "download_timeout": 600,
     }
     
     def __init__(self, db_path: str = "/app/db/music_bot.db"):
@@ -110,13 +126,6 @@ class ConfigManager:
     
     def _connect(self):
         """统一数据库连接：开启 WAL、设置忙等待与同步策略
-
-        - WAL 模式：读写不再互斥，从根上消除大部分 "database is locked"
-        - busy_timeout=30s：遇到锁时自动等待而非立即报错
-        - synchronous=NORMAL：WAL 下安全且更快
-
-        所有业务方法应使用 `with self._connect() as conn:`，
-        不要再直接 sqlite3.connect。
         """
         conn = sqlite3.connect(self.db_path, timeout=30)
         try:
@@ -172,7 +181,7 @@ class ConfigManager:
                     )
                 ''')
                 
-                # 创建订阅歌单表（用于增量更新）
+                # 创建订阅歌单表
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS subscribed_playlists (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -192,7 +201,7 @@ class ConfigManager:
                     )
                 ''')
                 
-                # 创建歌单歌曲记录表（记录已下载的歌曲）
+                # 创建歌单歌曲记录表
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS playlist_songs (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -211,7 +220,7 @@ class ConfigManager:
                     )
                 ''')
                 
-                # 创建日志表（用于存储应用日志）
+                # 创建日志表
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS app_logs (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -245,7 +254,7 @@ class ConfigManager:
                     conn.commit()
                     logger.info("✅ 默认配置已插入数据库")
 
-            # 启动时清理老日志，防止长跑后日志表过大拖垮
+            # 启动时清理老日志
             try:
                 self.cleanup_old_logs()
             except Exception:
@@ -259,9 +268,8 @@ class ConfigManager:
         """数据库迁移：为旧表添加新列"""
         cursor = conn.cursor()
         
-        # 定义需要迁移的列 (表名, 列名, 列定义)
+        # 定义需要迁移的列
         migrations = [
-            # playlist_songs 表的新列
             ("playlist_songs", "fail_reason", "TEXT"),
             ("playlist_songs", "fail_time", "TIMESTAMP"),
             ("playlist_songs", "retry_count", "INTEGER DEFAULT 0"),
@@ -269,7 +277,6 @@ class ConfigManager:
         
         for table, column, definition in migrations:
             try:
-                # 检查列是否存在
                 cursor.execute(f"PRAGMA table_info({table})")
                 columns = [row[1] for row in cursor.fetchall()]
                 
@@ -393,8 +400,7 @@ class ConfigManager:
                 cursor = conn.cursor()
                 
                 for key, value in config_dict.items():
-                    # 跳过敏感配置的掩码占位值——前端展示为 ******，
-                    # 未修改时原样提交，不应把掩码写回覆盖真实值
+                    # 跳过敏感配置的掩码占位值
                     if value == '******':
                         continue
                     value_type = type(value).__name__
@@ -426,73 +432,6 @@ class ConfigManager:
             logger.error(f"❌ 重置配置失败: {e}")
             return False
     
-    def add_download_history(self, platform: str, content_type: str, content_id: str,
-                            title: str = None, artist: str = None, file_path: str = None,
-                            file_size: int = None, quality: str = None) -> bool:
-        """添加下载历史记录"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO download_history 
-                    (platform, content_type, content_id, title, artist, file_path, file_size, quality)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (platform, content_type, content_id, title, artist, file_path, file_size, quality))
-                conn.commit()
-                return True
-                
-        except Exception as e:
-            logger.error(f"❌ 添加下载历史失败: {e}")
-            return False
-    
-    def get_download_history(self, limit: int = 50, platform: str = None) -> List[Dict[str, Any]]:
-        """获取下载历史"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                
-                if platform:
-                    cursor.execute("""
-                        SELECT * FROM download_history 
-                        WHERE platform = ?
-                        ORDER BY created_at DESC LIMIT ?
-                    """, (platform, limit))
-                else:
-                    cursor.execute("""
-                        SELECT * FROM download_history 
-                        ORDER BY created_at DESC LIMIT ?
-                    """, (limit,))
-                
-                columns = [description[0] for description in cursor.description]
-                rows = cursor.fetchall()
-                
-                return [dict(zip(columns, row)) for row in rows]
-                
-        except Exception as e:
-            logger.error(f"❌ 获取下载历史失败: {e}")
-            return []
-    
-    def check_download_exists(self, platform: str, content_type: str, content_id: str) -> Optional[Dict[str, Any]]:
-        """检查是否已下载过此内容"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT * FROM download_history 
-                    WHERE platform = ? AND content_type = ? AND content_id = ?
-                    ORDER BY created_at DESC LIMIT 1
-                """, (platform, content_type, content_id))
-                
-                row = cursor.fetchone()
-                if row:
-                    columns = [description[0] for description in cursor.description]
-                    return dict(zip(columns, row))
-                return None
-                
-        except Exception as e:
-            logger.error(f"❌ 检查下载历史失败: {e}")
-            return None
-
     def get_config_by_category(self, category: str) -> Dict[str, Any]:
         """按类别获取配置"""
         all_config = self.get_all_config()
@@ -512,636 +451,6 @@ class ConfigManager:
         except json.JSONDecodeError as e:
             logger.error(f"❌ JSON 解析失败: {e}")
             return False
-    
-    # ==================== 订阅歌单管理 ====================
-    
-    def add_subscribed_playlist(self, playlist_id: str, playlist_name: str = None,
-                                playlist_url: str = None, platform: str = 'netease',
-                                check_interval: int = 3600) -> bool:
-        """添加订阅歌单"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO subscribed_playlists 
-                    (platform, playlist_id, playlist_name, playlist_url, check_interval)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(platform, playlist_id) DO UPDATE SET 
-                        playlist_name = COALESCE(?, playlist_name),
-                        playlist_url = COALESCE(?, playlist_url),
-                        check_interval = ?,
-                        updated_at = CURRENT_TIMESTAMP
-                """, (platform, playlist_id, playlist_name, playlist_url, check_interval,
-                      playlist_name, playlist_url, check_interval))
-                conn.commit()
-                logger.info(f"✅ 添加订阅歌单: {playlist_name or playlist_id}")
-                return True
-        except Exception as e:
-            logger.error(f"❌ 添加订阅歌单失败: {e}")
-            return False
-    
-    def get_playlist_download_dir(self, playlist_id: str, platform: str = 'netease') -> str:
-        """获取歌单的下载目录"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT download_dir FROM subscribed_playlists
-                    WHERE platform = ? AND playlist_id = ?
-                """, (platform, playlist_id))
-                row = cursor.fetchone()
-                return row[0] if row else None
-        except Exception as e:
-            logger.error(f"❌ 获取歌单下载目录失败: {e}")
-            return None
-    
-    def remove_subscribed_playlist(self, playlist_id: str, platform: str = 'netease', delete_files: bool = False) -> bool:
-        """移除订阅歌单
-        
-        Args:
-            playlist_id: 歌单ID
-            platform: 平台
-            delete_files: 是否同时删除本地文件
-        """
-        try:
-            # 如果需要删除文件，先获取下载目录
-            download_dir = None
-            if delete_files:
-                download_dir = self.get_playlist_download_dir(playlist_id, platform)
-            
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    DELETE FROM subscribed_playlists 
-                    WHERE platform = ? AND playlist_id = ?
-                """, (platform, playlist_id))
-                # 同时删除该歌单的歌曲记录
-                cursor.execute("""
-                    DELETE FROM playlist_songs WHERE playlist_id = ?
-                """, (playlist_id,))
-                conn.commit()
-                logger.info(f"✅ 移除订阅歌单: {playlist_id}")
-            
-            # 删除本地文件
-            if delete_files and download_dir:
-                self._delete_playlist_files(download_dir)
-            
-            return True
-        except Exception as e:
-            logger.error(f"❌ 移除订阅歌单失败: {e}")
-            return False
-    
-    def _delete_playlist_files(self, download_dir: str) -> bool:
-        """删除歌单的本地文件"""
-        import shutil
-        from pathlib import Path
-        
-        try:
-            path = Path(download_dir)
-            if path.exists() and path.is_dir():
-                shutil.rmtree(path)
-                logger.info(f"🗑️ 已删除歌单目录: {download_dir}")
-                return True
-            else:
-                logger.warning(f"⚠️ 歌单目录不存在: {download_dir}")
-                return False
-        except Exception as e:
-            logger.error(f"❌ 删除歌单文件失败: {e}")
-            return False
-    
-    def get_subscribed_playlists(self, platform: str = None, enabled_only: bool = False) -> List[Dict[str, Any]]:
-        """获取订阅歌单列表"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                
-                query = "SELECT * FROM subscribed_playlists WHERE 1=1"
-                params = []
-                
-                if platform:
-                    query += " AND platform = ?"
-                    params.append(platform)
-                
-                if enabled_only:
-                    query += " AND enabled = 1"
-                
-                query += " ORDER BY created_at DESC"
-                
-                cursor.execute(query, params)
-                columns = [description[0] for description in cursor.description]
-                rows = cursor.fetchall()
-                
-                return [dict(zip(columns, row)) for row in rows]
-        except Exception as e:
-            logger.error(f"❌ 获取订阅歌单失败: {e}")
-            return []
-    
-    def get_subscribed_playlist(self, playlist_id: str, platform: str = 'netease') -> Optional[Dict[str, Any]]:
-        """获取单个订阅歌单信息"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT * FROM subscribed_playlists 
-                    WHERE platform = ? AND playlist_id = ?
-                """, (platform, playlist_id))
-                
-                row = cursor.fetchone()
-                if row:
-                    columns = [description[0] for description in cursor.description]
-                    return dict(zip(columns, row))
-                return None
-        except Exception as e:
-            logger.error(f"❌ 获取订阅歌单失败: {e}")
-            return None
-    
-    def update_subscribed_playlist(self, playlist_id: str, platform: str = 'netease', **kwargs) -> bool:
-        """更新订阅歌单信息"""
-        try:
-            allowed_fields = ['playlist_name', 'auto_download', 'check_interval', 
-                             'last_check_time', 'last_song_count', 'total_downloaded', 'enabled']
-            
-            updates = []
-            values = []
-            for key, value in kwargs.items():
-                if key in allowed_fields:
-                    updates.append(f"{key} = ?")
-                    values.append(value)
-            
-            if not updates:
-                return False
-            
-            values.extend([platform, playlist_id])
-            
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute(f"""
-                    UPDATE subscribed_playlists 
-                    SET {', '.join(updates)}, updated_at = CURRENT_TIMESTAMP
-                    WHERE platform = ? AND playlist_id = ?
-                """, values)
-                conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"❌ 更新订阅歌单失败: {e}")
-            return False
-    
-    def add_playlist_song(self, playlist_id: str, song_id: str, song_name: str = None,
-                         artist: str = None, album: str = None, downloaded: bool = False,
-                         fail_reason: str = None) -> bool:
-        """添加歌单歌曲记录"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                download_time = datetime.now().isoformat() if downloaded else None
-                fail_time = datetime.now().isoformat() if fail_reason else None
-                cursor.execute("""
-                    INSERT INTO playlist_songs 
-                    (playlist_id, song_id, song_name, artist, album, downloaded, download_time, fail_reason, fail_time)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(playlist_id, song_id) DO UPDATE SET
-                        song_name = COALESCE(?, song_name),
-                        artist = COALESCE(?, artist),
-                        album = COALESCE(?, album),
-                        downloaded = ?,
-                        download_time = CASE WHEN ? THEN COALESCE(download_time, CURRENT_TIMESTAMP) ELSE download_time END,
-                        fail_reason = ?,
-                        fail_time = CASE WHEN ? IS NOT NULL THEN CURRENT_TIMESTAMP ELSE fail_time END,
-                        retry_count = CASE WHEN ? IS NOT NULL THEN retry_count + 1 ELSE retry_count END
-                """, (playlist_id, song_id, song_name, artist, album, downloaded, download_time, fail_reason, fail_time,
-                      song_name, artist, album, downloaded, downloaded, fail_reason, fail_reason, fail_reason))
-                conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"❌ 添加歌单歌曲记录失败: {e}")
-            return False
-    
-    def get_playlist_songs(self, playlist_id: str, downloaded_only: bool = False) -> List[Dict[str, Any]]:
-        """获取歌单中的歌曲记录"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                
-                query = "SELECT * FROM playlist_songs WHERE playlist_id = ?"
-                params = [playlist_id]
-                
-                if downloaded_only:
-                    query += " AND downloaded = 1"
-                
-                query += " ORDER BY created_at"
-                
-                cursor.execute(query, params)
-                columns = [description[0] for description in cursor.description]
-                rows = cursor.fetchall()
-                
-                return [dict(zip(columns, row)) for row in rows]
-        except Exception as e:
-            logger.error(f"❌ 获取歌单歌曲失败: {e}")
-            return []
-    
-    def get_undownloaded_songs(self, playlist_id: str) -> List[Dict[str, Any]]:
-        """获取歌单中未下载的歌曲"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT * FROM playlist_songs 
-                    WHERE playlist_id = ? AND downloaded = 0
-                    ORDER BY created_at
-                """, (playlist_id,))
-                
-                columns = [description[0] for description in cursor.description]
-                rows = cursor.fetchall()
-                
-                return [dict(zip(columns, row)) for row in rows]
-        except Exception as e:
-            logger.error(f"❌ 获取未下载歌曲失败: {e}")
-            return []
-    
-    def mark_song_downloaded(self, playlist_id: str, song_id: str) -> bool:
-        """标记歌曲已下载"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE playlist_songs 
-                    SET downloaded = 1, download_time = CURRENT_TIMESTAMP
-                    WHERE playlist_id = ? AND song_id = ?
-                """, (playlist_id, song_id))
-                conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"❌ 标记歌曲已下载失败: {e}")
-            return False
-    
-    def is_song_downloaded(self, playlist_id: str, song_id: str) -> bool:
-        """检查歌曲是否已下载"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT downloaded FROM playlist_songs 
-                    WHERE playlist_id = ? AND song_id = ?
-                """, (playlist_id, song_id))
-                
-                row = cursor.fetchone()
-                return bool(row and row[0])
-        except Exception as e:
-            logger.error(f"❌ 检查歌曲下载状态失败: {e}")
-            return False
-    
-    def mark_song_failed(self, playlist_id: str, song_id: str, fail_reason: str) -> bool:
-        """标记歌曲下载失败"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE playlist_songs 
-                    SET fail_reason = ?, fail_time = CURRENT_TIMESTAMP, retry_count = retry_count + 1
-                    WHERE playlist_id = ? AND song_id = ?
-                """, (fail_reason, playlist_id, song_id))
-                conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"❌ 标记歌曲失败状态失败: {e}")
-            return False
-    
-    def remove_playlist_song(self, playlist_id: str, song_id: str) -> bool:
-        """从歌单中移除歌曲记录"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    DELETE FROM playlist_songs 
-                    WHERE playlist_id = ? AND song_id = ?
-                """, (playlist_id, song_id))
-                conn.commit()
-                logger.debug(f"✅ 移除歌曲记录: {song_id} from playlist {playlist_id}")
-                return True
-        except Exception as e:
-            logger.error(f"❌ 移除歌曲记录失败: {e}")
-            return False
-    
-    def is_song_permanently_failed(self, playlist_id: str, song_id: str) -> bool:
-        """检查歌曲是否因永久性原因失败（版权、VIP等）
-        
-        Returns:
-            True: 永久性失败，不应重试
-            False: 可以重试
-        """
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT fail_reason, retry_count FROM playlist_songs 
-                    WHERE playlist_id = ? AND song_id = ? AND downloaded = 0
-                """, (playlist_id, song_id))
-                row = cursor.fetchone()
-                
-                if not row or not row[0]:
-                    return False
-                
-                fail_reason = row[0].lower()
-                retry_count = row[1] or 0
-                
-                # 永久性失败的关键词
-                permanent_keywords = [
-                    '版权', 'copyright', 
-                    'vip', '会员',
-                    '付费', 'paid',
-                    '下架', 'unavailable',
-                    '无法获取下载链接',
-                    '不可用', 'not available'
-                ]
-                
-                # 检查是否包含永久性失败关键词
-                if any(keyword in fail_reason for keyword in permanent_keywords):
-                    logger.debug(f"⏭️ 歌曲 {song_id} 因永久性原因跳过: {row[0]}")
-                    return True
-                
-                # 重试次数过多（超过3次）也视为永久性失败
-                if retry_count >= 3:
-                    logger.debug(f"⏭️ 歌曲 {song_id} 重试次数过多({retry_count}次)，跳过")
-                    return True
-                
-                return False
-                
-        except Exception as e:
-            logger.error(f"❌ 检查歌曲失败状态失败: {e}")
-            return False
-    
-    def get_failed_songs(self, playlist_id: str) -> List[Dict[str, Any]]:
-        """获取歌单中下载失败的歌曲"""
-        try:
-            with self._connect() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT * FROM playlist_songs 
-                    WHERE playlist_id = ? AND downloaded = 0 AND fail_reason IS NOT NULL
-                    ORDER BY fail_time DESC
-                """, (playlist_id,))
-                
-                rows = cursor.fetchall()
-                return [dict(row) for row in rows]
-        except Exception as e:
-            logger.error(f"❌ 获取失败歌曲列表失败: {e}")
-            return []
-    
-    def clear_song_fail_status(self, playlist_id: str, song_id: str) -> bool:
-        """清除歌曲的失败状态（用于重试）"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE playlist_songs 
-                    SET fail_reason = NULL, fail_time = NULL
-                    WHERE playlist_id = ? AND song_id = ?
-                """, (playlist_id, song_id))
-                conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"❌ 清除失败状态失败: {e}")
-            return False
-    
-    def get_all_failed_songs(self) -> List[Dict[str, Any]]:
-        """获取所有歌单中下载失败的歌曲"""
-        try:
-            with self._connect() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT ps.*, sp.playlist_name 
-                    FROM playlist_songs ps
-                    LEFT JOIN subscribed_playlists sp ON ps.playlist_id = sp.playlist_id
-                    WHERE ps.downloaded = 0 AND ps.fail_reason IS NOT NULL
-                    ORDER BY ps.fail_time DESC
-                """, ())
-                
-                rows = cursor.fetchall()
-                return [dict(row) for row in rows]
-        except Exception as e:
-            logger.error(f"❌ 获取所有失败歌曲失败: {e}")
-            return []
-    
-    def get_playlist_stats(self, playlist_id: str) -> Dict[str, int]:
-        """获取歌单统计信息"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                
-                cursor.execute("""
-                    SELECT 
-                        COUNT(*) as total,
-                        SUM(CASE WHEN downloaded = 1 THEN 1 ELSE 0 END) as downloaded,
-                        SUM(CASE WHEN downloaded = 0 AND fail_reason IS NOT NULL THEN 1 ELSE 0 END) as failed
-                    FROM playlist_songs WHERE playlist_id = ?
-                """, (playlist_id,))
-                
-                row = cursor.fetchone()
-                total = row[0] or 0
-                downloaded = row[1] or 0
-                failed = row[2] or 0
-                return {
-                    'total': total,
-                    'downloaded': downloaded,
-                    'failed': failed,
-                    'pending': total - downloaded - failed
-                }
-        except Exception as e:
-            logger.error(f"❌ 获取歌单统计失败: {e}")
-            return {'total': 0, 'downloaded': 0, 'failed': 0, 'pending': 0}
-    
-    # ==================== 日志管理 ====================
-    
-    def add_log(self, level: str, message: str, logger_name: str = None, 
-                category: str = 'general', extra_data: Dict = None) -> bool:
-        """添加日志记录"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO app_logs (level, logger_name, message, category, extra_data)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (level, logger_name, message, category, 
-                      json.dumps(extra_data) if extra_data else None))
-                conn.commit()
-                return True
-        except Exception as e:
-            # 不用 logger，避免递归
-            print(f"添加日志失败: {e}")
-            return False
-
-    def cleanup_old_logs(self, keep_days: int = 30, keep_max: int = 100000) -> int:
-        """清理老日志，防止 app_logs 无限增长拖垮长跑。
-
-        - 删除 keep_days 天前的日志
-        - 若剩余仍超过 keep_max，删除最旧的至 keep_max 条
-        """
-        try:
-            with self._connect() as conn:
-                cur = conn.cursor()
-                cur.execute(
-                    "DELETE FROM app_logs WHERE timestamp < datetime('now', ?)",
-                    (f'-{keep_days} days',)
-                )
-                cur.execute(
-                    "DELETE FROM app_logs WHERE id NOT IN "
-                    "(SELECT id FROM app_logs ORDER BY id DESC LIMIT ?)",
-                    (keep_max,)
-                )
-                conn.commit()
-                return cur.rowcount
-        except Exception:
-            return 0
-
-    def get_logs(self, limit: int = 100, offset: int = 0, level: str = None,
-                 category: str = None, search: str = None, 
-                 start_time: str = None, end_time: str = None) -> List[Dict]:
-        """获取日志列表"""
-        try:
-            with self._connect() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                
-                query = "SELECT * FROM app_logs WHERE 1=1"
-                params = []
-                
-                if level:
-                    query += " AND level = ?"
-                    params.append(level)
-                
-                if category:
-                    query += " AND category = ?"
-                    params.append(category)
-                
-                if search:
-                    query += " AND message LIKE ?"
-                    params.append(f"%{search}%")
-                
-                if start_time:
-                    query += " AND timestamp >= ?"
-                    params.append(start_time)
-                
-                if end_time:
-                    query += " AND timestamp <= ?"
-                    params.append(end_time)
-                
-                query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
-                params.extend([limit, offset])
-                
-                cursor.execute(query, params)
-                rows = cursor.fetchall()
-                
-                return [dict(row) for row in rows]
-        except Exception as e:
-            logger.error(f"❌ 获取日志失败: {e}")
-            return []
-    
-    def get_log_count(self, level: str = None, category: str = None, 
-                      search: str = None, start_time: str = None, 
-                      end_time: str = None) -> int:
-        """获取日志数量"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                
-                query = "SELECT COUNT(*) FROM app_logs WHERE 1=1"
-                params = []
-                
-                if level:
-                    query += " AND level = ?"
-                    params.append(level)
-                
-                if category:
-                    query += " AND category = ?"
-                    params.append(category)
-                
-                if search:
-                    query += " AND message LIKE ?"
-                    params.append(f"%{search}%")
-                
-                if start_time:
-                    query += " AND timestamp >= ?"
-                    params.append(start_time)
-                
-                if end_time:
-                    query += " AND timestamp <= ?"
-                    params.append(end_time)
-                
-                cursor.execute(query, params)
-                return cursor.fetchone()[0]
-        except Exception as e:
-            logger.error(f"❌ 获取日志数量失败: {e}")
-            return 0
-    
-    def get_log_categories(self) -> List[str]:
-        """获取所有日志类别"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT DISTINCT category FROM app_logs ORDER BY category")
-                return [row[0] for row in cursor.fetchall() if row[0]]
-        except Exception as e:
-            logger.error(f"❌ 获取日志类别失败: {e}")
-            return []
-    
-    def clear_logs(self, before_date: str = None, category: str = None) -> int:
-        """清理日志"""
-        try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                
-                query = "DELETE FROM app_logs WHERE 1=1"
-                params = []
-                
-                if before_date:
-                    query += " AND timestamp < ?"
-                    params.append(before_date)
-                
-                if category:
-                    query += " AND category = ?"
-                    params.append(category)
-                
-                cursor.execute(query, params)
-                deleted = cursor.rowcount
-                conn.commit()
-                return deleted
-        except Exception as e:
-            logger.error(f"❌ 清理日志失败: {e}")
-            return 0
-    
-    def export_logs(self, category: str = None, level: str = None,
-                    start_time: str = None, end_time: str = None,
-                    format: str = 'json') -> str:
-        """导出日志"""
-        logs = self.get_logs(
-            limit=10000,  # 导出时限制最大条数
-            category=category,
-            level=level,
-            start_time=start_time,
-            end_time=end_time
-        )
-        
-        if format == 'json':
-            return json.dumps(logs, ensure_ascii=False, indent=2)
-        elif format == 'csv':
-            import csv
-            import io
-            output = io.StringIO()
-            if logs:
-                writer = csv.DictWriter(output, fieldnames=logs[0].keys())
-                writer.writeheader()
-                writer.writerows(logs)
-            return output.getvalue()
-        elif format == 'txt':
-            lines = []
-            for log in logs:
-                line = f"[{log.get('timestamp', '')}] [{log.get('level', '')}] [{log.get('category', '')}] {log.get('message', '')}"
-                lines.append(line)
-            return '\n'.join(lines)
-        else:
-            return json.dumps(logs, ensure_ascii=False, indent=2)
 
 
 # 全局配置管理器实例

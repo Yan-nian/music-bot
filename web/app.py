@@ -29,6 +29,21 @@ app = Flask(__name__,
 # 设置 session 密钥（从环境变量读取或使用固定值，避免每次重启生成新密钥导致 session 失效）
 app.secret_key = os.environ.get('FLASK_SECRET_KEY') or secrets.token_hex(32)
 
+# 禁用模板缓存，确保修改后立即生效（防止浏览器/CDN 缓存旧版 HTML）
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+
+
+@app.after_request
+def _no_cache_headers(response):
+    """为所有 HTML 响应添加 no-cache 头，防止浏览器缓存旧版页面"""
+    if 'text/html' in response.content_type:
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    return response
+
+
 # 配置管理器实例
 config_manager: ConfigManager = None
 

@@ -68,15 +68,7 @@ class ConfigManager:
         "apple_music_decrypt_host": "",
         "apple_music_get_host": "",
         "apple_music_cookies": "",
-        
-        # YouTube Music 配置
-        "youtube_music_enabled": True,
-        "youtube_music_download_path": "/downloads/youtube_music",  # YouTube Music 单独下载路径
-        "youtube_music_quality": "best",  # best/320k/256k/128k
-        "youtube_music_format": "m4a",  # m4a/mp3
-        "youtube_music_download_cover": True,
-        "youtube_music_cookies": "",
-        
+
         # qBittorrent 配置
         "qbittorrent_enabled": False,
         "qbittorrent_host": "",
@@ -311,10 +303,6 @@ class ConfigManager:
             "apple_music_region": "Apple Music 地区",
             "apple_music_decrypt_host": "解密服务地址",
             "apple_music_get_host": "获取服务地址",
-            "youtube_music_enabled": "启用 YouTube Music 下载",
-            "youtube_music_quality": "YouTube Music 下载音质",
-            "youtube_music_format": "YouTube Music 输出格式",
-            "youtube_music_download_cover": "下载封面",
             "qbittorrent_enabled": "启用 qBittorrent",
             "qbittorrent_host": "qBittorrent 主机地址",
             "qbittorrent_port": "qBittorrent 端口",

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Music Bot - 精简版音乐下载机器人
-专注于音乐下载功能，支持网易云音乐、Apple Music、YouTube Music
+专注于音乐下载功能，支持网易云音乐、Apple Music
 """
 
 import os
@@ -35,7 +35,6 @@ from config_manager import ConfigManager, get_config_manager
 
 # 导入下载器
 from downloaders.netease import NeteaseDownloader
-from downloaders.youtube_music import YouTubeMusicDownloader
 from downloaders.apple_music import AppleMusicDownloader
 
 # 导入 Web 服务
@@ -118,14 +117,6 @@ class MusicBot:
             except Exception as e:
                 logger.error(f"❌ 网易云音乐下载器初始化失败: {e}")
         
-        # YouTube Music
-        if self.config.get('youtube_music_enabled', True):
-            try:
-                self.downloaders['youtube_music'] = YouTubeMusicDownloader(self.config_manager)
-                logger.info("✅ YouTube Music 下载器已启用")
-            except Exception as e:
-                logger.error(f"❌ YouTube Music 下载器初始化失败: {e}")
-        
         # Apple Music
         if self.config.get('apple_music_enabled', True):
             try:
@@ -157,8 +148,7 @@ class MusicBot:
             "发送音乐链接即可下载！\n\n"
             "*支持的平台：*\n"
             "• 🎵 网易云音乐 - 歌曲/专辑/歌单\n"
-            "• 🍎 Apple Music - 歌曲/专辑\n"
-            "• ▶️ YouTube Music - 歌曲/播放列表\n\n"
+            "• 🍎 Apple Music - 歌曲/专辑\n\n"
             "*命令：*\n"
             "/start - 显示帮助\n"
             "/status - 查看状态\n"
@@ -197,7 +187,7 @@ class MusicBot:
             created_at = item.get('created_at', '')[:16]  # 只显示日期和时间
             
             # 平台图标
-            platform_icon = {'netease': '🎵', 'apple_music': '🍎', 'youtube_music': '▶️'}.get(platform, '📀')
+            platform_icon = {'netease': '🎵', 'apple_music': '🍎'}.get(platform, '📀')
             type_icon = {'song': '🎵', 'album': '💿', 'playlist': '📋'}.get(content_type, '📁')
             
             lines.append(f"{i}. {platform_icon}{type_icon} *{title}*")
@@ -333,7 +323,6 @@ class MusicBot:
         platform_paths = {
             'netease': self._cfg('netease_download_path', '/downloads/netease'),
             'apple_music': self._cfg('apple_music_download_path', '/downloads/apple_music'),
-            'youtube_music': self._cfg('youtube_music_download_path', '/downloads/youtube_music'),
         }
         return platform_paths.get(platform, self.download_path)
     

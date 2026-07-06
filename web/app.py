@@ -40,7 +40,7 @@ DEFAULT_PASSWORD = 'admin'
 # 需要掩码的敏感配置项（不再明文返回前端）
 SENSITIVE_KEYS = {
     'telegram_bot_token', 'netease_cookies', 'apple_music_session_string',
-    'youtube_music_cookies', 'qbittorrent_password', 'flask_secret_key',
+    'qbittorrent_password', 'flask_secret_key',
     'password_salt', 'admin_password',
 }
 
@@ -450,7 +450,6 @@ def get_status():
             'bot_configured': bool(config.get('telegram_bot_token')),
             'netease_enabled': config.get('netease_enabled', False),
             'apple_music_enabled': config.get('apple_music_enabled', False),
-            'youtube_music_enabled': config.get('youtube_music_enabled', False),
             'qbittorrent_enabled': config.get('qbittorrent_enabled', False),
             'proxy_enabled': config.get('proxy_enabled', False),
         }

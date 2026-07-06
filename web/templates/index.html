@@ -219,9 +219,6 @@
             <button class="nav-item" data-section="apple" onclick="switchSection(this)">
                 <span class="nav-icon">🍎</span><span class="nav-label">Apple Music</span><span class="status-dot"></span>
             </button>
-            <button class="nav-item" data-section="youtube" onclick="switchSection(this)">
-                <span class="nav-icon">▶️</span><span class="nav-label">YouTube Music</span><span class="status-dot"></span>
-            </button>
             <button class="nav-item" data-section="general" onclick="switchSection(this)">
                 <span class="nav-icon">⚙️</span><span class="nav-label">通用设置</span><span class="status-dot"></span>
             </button>
@@ -424,56 +421,6 @@
                 </div>
             </div>
 
-            <!-- YouTube Music -->
-            <div class="config-section" id="section-youtube">
-                <div class="card">
-                    <div class="switch-row">
-                        <div class="switch-text"><div class="switch-title">启用 YouTube Music 下载</div></div>
-                        <label class="switch"><input type="checkbox" id="youtube_music_enabled"><span class="slider"></span></label>
-                    </div>
-                </div>
-                <div class="card">
-                    <div class="card-title">存储与下载</div>
-                    <div class="field">
-                        <label>下载保存路径</label>
-                        <input type="text" id="youtube_music_download_path" placeholder="/downloads/youtube_music">
-                    </div>
-                    <div class="grid-2">
-                        <div class="field">
-                            <label>音质</label>
-                            <select id="youtube_music_quality">
-                                <option value="best">最佳</option>
-                                <option value="320k">320kbps</option>
-                                <option value="256k">256kbps</option>
-                                <option value="128k">128kbps</option>
-                            </select>
-                        </div>
-                        <div class="field">
-                            <label>输出格式</label>
-                            <select id="youtube_music_format">
-                                <option value="m4a">M4A</option>
-                                <option value="mp3">MP3</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-                <div class="card">
-                    <div class="card-title">功能开关</div>
-                    <div class="switch-row">
-                        <div class="switch-text"><div class="switch-title">下载封面</div></div>
-                        <label class="switch"><input type="checkbox" id="youtube_music_download_cover"><span class="slider"></span></label>
-                    </div>
-                </div>
-                <div class="card">
-                    <div class="card-title">Cookies</div>
-                    <div class="card-desc">用于下载会员专属内容。从 youtube.com 导出 Netscape 格式 cookies。</div>
-                    <div class="field">
-                        <label>YouTube Cookies</label>
-                        <textarea id="youtube_music_cookies" placeholder="Netscape 格式" rows="5"></textarea>
-                    </div>
-                </div>
-            </div>
-
             <!-- 通用 -->
             <div class="config-section" id="section-general">
                 <div class="card">
@@ -538,17 +485,16 @@
         telegram: ['telegram_bot_token', 'telegram_allowed_users', 'telegram_api_id', 'telegram_api_hash', 'telegram_session_string'],
         netease: ['netease_enabled', 'netease_download_path', 'netease_quality', 'netease_song_file_format', 'netease_dir_format', 'netease_album_folder_format', 'netease_download_lyrics', 'netease_download_cover', 'netease_lyrics_merge', 'netease_cookies'],
         apple: ['apple_music_enabled', 'apple_music_download_path', 'apple_music_quality', 'apple_music_region', 'apple_music_decrypt_host', 'apple_music_get_host', 'apple_music_download_lyrics', 'apple_music_download_cover', 'apple_music_cookies'],
-        youtube: ['youtube_music_enabled', 'youtube_music_download_path', 'youtube_music_quality', 'youtube_music_format', 'youtube_music_download_cover', 'youtube_music_cookies'],
         general: ['download_path', 'send_to_telegram', 'proxy_enabled', 'proxy_host', 'log_level', 'log_to_file', 'log_to_console']
     };
 
     // 敏感字段：后端以 ****** 掩码返回，前端不回填、留空不提交（保持原值）
-    const SENSITIVE_FIELDS = ['telegram_bot_token', 'telegram_session_string', 'netease_cookies', 'apple_music_cookies', 'youtube_music_cookies'];
+    const SENSITIVE_FIELDS = ['telegram_bot_token', 'telegram_session_string', 'netease_cookies', 'apple_music_cookies'];
 
     // 分区标题
     const SECTION_TITLES = {
         telegram: '📱 Telegram 配置', netease: '🎵 网易云音乐', apple: '🍎 Apple Music',
-        youtube: '▶️ YouTube Music', general: '⚙️ 通用设置'
+        general: '⚙️ 通用设置'
     };
 
     function showToast(message, type = 'info') {
@@ -621,7 +567,6 @@
         set('telegram', config.telegram_bot_token && config.telegram_bot_token !== '******');
         set('netease', config.netease_enabled);
         set('apple', config.apple_music_enabled);
-        set('youtube', config.youtube_music_enabled);
     }
 
     function getFormData(section) {

@@ -96,7 +96,6 @@ class ProgressFormatter:
     PLATFORM_ICONS = {
         'netease': '🎵',
         'apple_music': '🍎',
-        'youtube_music': '▶️',
     }
     
     # 类型图标

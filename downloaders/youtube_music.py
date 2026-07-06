@@ -81,7 +81,12 @@ class YouTubeMusicDownloader(BaseDownloader):
         self.download_cover = self.get_config('youtube_music_download_cover', True)
         
         logger.info(f"📝 YouTube Music 配置: 音质={self.quality}, 格式={self.format}")
-    
+
+    def reload_config(self):
+        """重新加载配置与 cookies 路径（Web 修改后无需重启即生效）"""
+        self._load_config()
+        self.cookies_path = self._find_cookies()
+
     def _find_cookies(self) -> Optional[str]:
         """查找 cookies 文件"""
         possible_paths = [

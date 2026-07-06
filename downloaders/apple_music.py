@@ -65,6 +65,10 @@ class AppleMusicDownloader(BaseDownloader):
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
+    def reload_config(self):
+        """重新加载配置（Web 修改后无需重启即生效）"""
+        self._load_config()
+
     def _check_gamdl_availability(self):
         """检查 gamdl 是否可用"""
         try:

@@ -6,7 +6,6 @@
 
 - 🎵 **网易云音乐** - 歌曲/专辑/歌单下载，支持无损音质
 - 🍎 **Apple Music** - 支持 ALAC 无损下载
-- ▶️ **YouTube Music** - 歌曲/播放列表下载
 - 🌐 **Web 配置** - 可视化配置管理界面
 - 🤖 **Telegram Bot** - 发送链接即可下载
 - � **Telegram Session** - 内置 Session 生成器，支持大文件下载
@@ -128,10 +127,6 @@ python main.py --db-path /path/to/config.db
 - 音质选择：AAC-256/无损ALAC/杜比全景声
 - 地区设置
 - Cookies 配置
-
-#### YouTube Music
-- 音质选择
-- 输出格式：M4A/MP3/OPUS
 
 ### 通用设置
 - 下载保存路径

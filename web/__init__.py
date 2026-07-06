@@ -1,7 +1,7 @@
 # Web 服务模块
 from .app import app, init_app, run_server
 from .tg_notifier import (
-    TelegramNotifier, get_notifier,
+    TelegramNotifier,
     ProgressFormatter, MessageTemplates,
     DownloadType, ProgressInfo, DownloadResult,
     NotifyType
@@ -15,7 +15,7 @@ __all__ = [
     # App
     'app', 'init_app', 'run_server',
     # Notifier
-    'TelegramNotifier', 'get_notifier',
+    'TelegramNotifier',
     'ProgressFormatter', 'MessageTemplates',
     'DownloadType', 'ProgressInfo', 'DownloadResult',
     'NotifyType',

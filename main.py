@@ -45,7 +45,7 @@ from web.db_logger import setup_database_logging, get_metadata_logger
 
 # 导入 TG 通知模块
 from web.tg_notifier import (
-    TelegramNotifier, get_notifier,
+    TelegramNotifier,
     ProgressFormatter, MessageTemplates,
     DownloadType, ProgressInfo, DownloadResult
 )
@@ -82,15 +82,14 @@ class MusicBot:
         # 初始化下载器
         self.downloaders = {}
         self._init_downloaders()
-        
+
         # Telegram 应用
         self.app: Optional[Application] = None
-        
-        # 初始化通知器
-        update_interval = self.config.get('telegram_progress_interval', 1.0)
-        self.notifier = get_notifier(update_interval)
-        
+
         # 下载路径
+        self.download_path = self.config.get('download_path', '/downloads')
+
+        logger.info(f"🎵 Music Bot v{BOT_VERSION} 初始化完成")
         self.download_path = self.config.get('download_path', '/downloads')
         
         logger.info(f"🎵 Music Bot v{BOT_VERSION} 初始化完成")
@@ -462,9 +461,11 @@ class MusicBot:
             # 获取当前事件循环
             main_loop = asyncio.get_running_loop()
             
-            # 配置通知器
-            self.notifier.set_main_loop(main_loop)
-            self.notifier.set_message(progress_msg)
+            # 为每个下载任务创建独立的通知器实例（避免并发任务进度串写）
+            update_interval = self._cfg('telegram_progress_interval', 1.0)
+            task_notifier = TelegramNotifier(update_interval)
+            task_notifier.set_main_loop(main_loop)
+            task_notifier.set_message(progress_msg)
             
             # 确定下载类型
             download_type = {
@@ -474,7 +475,7 @@ class MusicBot:
             }.get(content_type, DownloadType.SONG)
             
             # 创建进度回调
-            progress_callback = self.notifier.create_progress_callback(download_type)
+            progress_callback = task_notifier.create_progress_callback(download_type)
             
             # 定义同步下载函数包装器
             def run_download():

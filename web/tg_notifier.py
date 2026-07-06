@@ -759,18 +759,6 @@ class TelegramNotifier:
         return "✅ 下载完成！"
 
 
-# 全局通知器实例
-_notifier: Optional[TelegramNotifier] = None
-
-
-def get_notifier(update_interval: float = 1.0) -> TelegramNotifier:
-    """获取全局通知器实例"""
-    global _notifier
-    if _notifier is None:
-        _notifier = TelegramNotifier(update_interval)
-    return _notifier
-
-
 # ==================== 独立的 TG 消息发送功能 ====================
 
 def send_telegram_notification(config_manager, message: str, parse_mode: str = None) -> bool:

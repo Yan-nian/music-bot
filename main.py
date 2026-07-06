@@ -491,6 +491,9 @@ class MusicBot:
             def run_download():
                 """在子线程中执行下载"""
                 try:
+                    # 重新加载配置与 cookies，使 Web 修改即时生效
+                    if hasattr(downloader, 'reload_config'):
+                        downloader.reload_config()
                     if content_type == 'song':
                         return downloader.download_song(
                             content_id, download_dir, 
@@ -674,6 +677,10 @@ class MusicBot:
                 
                 # 获取下载目录
                 download_dir = self._cfg('netease_download_path', '/downloads/netease')
+
+                # 重新加载配置与 cookies，使 Web 修改即时生效
+                if hasattr(downloader, 'reload_config'):
+                    downloader.reload_config()
 
                 # 在线程池中执行同步（因为下载是同步操作）
                 result = await asyncio.to_thread(

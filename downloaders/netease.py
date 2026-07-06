@@ -151,7 +151,23 @@ class NeteaseDownloader(BaseDownloader):
                     logger.warning(f"⚠️ 读取 cookies 失败: {e}")
         
         logger.warning("⚠️ 未配置网易云 cookies，部分功能可能受限")
-    
+
+    def reload_config(self):
+        """重新加载配置与 cookies（Web 修改后无需重启即生效）
+
+        下载器是单例，__init__ 时把 cookies 读进 session.cookies、
+        把音质等读进实例属性。Web 改了配置后必须主动 reload，
+        否则要重启容器才生效——这是“网页保存 cookie 不生效”的根因。
+        cookies 用 hash 判断变化，未变则跳过重载以减少开销。
+        """
+        self._load_config()
+        cookies_str = self.get_config('netease_cookies', '')
+        if hash(cookies_str) != getattr(self, '_cookies_hash', None):
+            self._cookies_hash = hash(cookies_str)
+            self.session.cookies.clear()
+            self._load_cookies()
+            logger.info("🔄 网易云 cookies 已重新加载")
+
     def _parse_cookies(self, cookies_str: str):
         """解析 cookies 字符串"""
         try:

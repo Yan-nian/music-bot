@@ -168,6 +168,10 @@ class BaseDownloader(ABC):
         if self.config_manager:
             return self.config_manager.get_config(key, default)
         return default
+
+    def reload_config(self):
+        """重新加载配置（子类覆盖）。Web 修改配置后调用，使改动无需重启即生效"""
+        pass
     
     def format_size(self, size_bytes: int) -> str:
         """

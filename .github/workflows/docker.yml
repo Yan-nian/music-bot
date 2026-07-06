@@ -8,6 +8,8 @@ on:
       - 'v*'
     paths:
       - '**.py'
+      - '**.html'
+      - 'web/**'
       - 'Dockerfile'
       - 'docker-compose.yml'
       - 'requirements.txt'

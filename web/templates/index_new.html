@@ -889,13 +889,9 @@
             sidebar.classList.toggle('open');
         }
         
-        // 导航切换
+        // 导航点击（移动端自动关闭侧边栏）
         document.querySelectorAll('.nav-item').forEach(item => {
-            item.addEventListener('click', function(e) {
-                e.preventDefault();
-                document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-                this.classList.add('active');
-                
+            item.addEventListener('click', function() {
                 // 移动端自动关闭侧边栏
                 if (window.innerWidth <= 1024) {
                     toggleSidebar();

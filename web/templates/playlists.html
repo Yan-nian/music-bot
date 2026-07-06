@@ -3,1276 +3,584 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>歌单订阅管理 - Music Bot</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <title>歌单订阅 - Music Bot</title>
     <style>
         :root {
             --bg-color: #f5f5f7;
-            --card-bg: rgba(255, 255, 255, 0.8);
+            --sidebar-bg: #ffffff;
+            --card-bg: #ffffff;
             --text-primary: #1d1d1f;
             --text-secondary: #86868b;
+            --text-tertiary: #aeaeb2;
             --accent: #007AFF;
             --accent-hover: #0056b3;
+            --accent-soft: #e8f1ff;
             --success: #34c759;
             --warning: #ff9500;
             --danger: #ff3b30;
-            --border: rgba(0, 0, 0, 0.1);
-            --shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+            --border: rgba(0, 0, 0, 0.08);
+            --shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 16px rgba(0, 0, 0, 0.04);
+            --radius: 14px;
         }
-
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: var(--bg-color);
-            color: var(--text-primary);
-            min-height: 100vh;
-            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: var(--bg-color); color: var(--text-primary);
+            min-height: 100vh; line-height: 1.5; -webkit-font-smoothing: antialiased;
         }
+        .app { display: flex; min-height: 100vh; }
 
-        .container {
-            max-width: 1000px;
-            margin: 0 auto;
+        /* 侧边栏 */
+        .sidebar {
+            width: 248px; background: var(--sidebar-bg);
+            border-right: 1px solid var(--border);
+            display: flex; flex-direction: column;
+            position: sticky; top: 0; height: 100vh; flex-shrink: 0;
         }
-
-        /* 头部 */
-        .header {
-            text-align: center;
-            margin-bottom: 30px;
-            padding: 40px 20px;
-            background: var(--card-bg);
-            border-radius: 20px;
-            backdrop-filter: blur(20px);
-            box-shadow: var(--shadow);
-            position: relative;
-        }
-
-        .header-back {
-            position: absolute;
-            left: 20px;
-            top: 20px;
+        .sidebar-header { padding: 20px 18px 14px; border-bottom: 1px solid var(--border); }
+        .sidebar-header h1 { font-size: 1.05rem; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+        .sidebar-header p { font-size: 0.75rem; color: var(--text-secondary); margin-top: 2px; }
+        .nav-list { padding: 10px 10px; flex: 1; overflow-y: auto; }
+        .nav-item {
+            display: flex; align-items: center; gap: 10px;
+            width: 100%; padding: 10px 12px;
+            border: none; background: transparent;
+            border-radius: 10px; cursor: pointer;
+            font-size: 0.9rem; color: var(--text-primary);
+            text-align: left; transition: background 0.15s; margin-bottom: 2px;
             text-decoration: none;
-            font-size: 0.95rem;
-            padding: 10px 16px;
-            border-radius: 10px;
-            background: rgba(0, 0, 0, 0.05);
-            color: var(--text-primary);
-            transition: all 0.2s ease;
         }
-
-        .header-back:hover {
-            background: var(--accent);
-            color: white;
+        .nav-item:hover { background: var(--bg-color); }
+        .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+        .nav-item .nav-icon { font-size: 1.05rem; width: 22px; text-align: center; }
+        .nav-item .nav-label { flex: 1; }
+        .sidebar-footer { padding: 10px; border-top: 1px solid var(--border); }
+        .sidebar-footer a {
+            display: flex; align-items: center; gap: 10px;
+            padding: 9px 12px; border-radius: 10px;
+            text-decoration: none; color: var(--text-secondary);
+            font-size: 0.85rem; transition: background 0.15s;
         }
+        .sidebar-footer a:hover { background: var(--bg-color); color: var(--text-primary); }
+        .sidebar-footer a.active-page { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+        .sidebar-footer a.danger:hover { background: #fff0f0; color: var(--danger); }
 
-        .header h1 {
-            font-size: 2rem;
-            font-weight: 700;
-            margin-bottom: 10px;
-            background: linear-gradient(135deg, var(--accent), #5856d6);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+        /* 内容区 */
+        .content { flex: 1; min-width: 0; padding: 28px 32px 80px; }
+        .content-inner { max-width: 900px; margin: 0 auto; }
+        .content-header {
+            display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 22px; gap: 12px; flex-wrap: wrap;
         }
+        .content-header h2 { font-size: 1.4rem; font-weight: 600; }
+        .menu-toggle { display: none; }
 
-        .header p {
-            color: var(--text-secondary);
-            font-size: 1rem;
+        /* 卡片 */
+        .card {
+            background: var(--card-bg); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 20px;
+            margin-bottom: 16px; box-shadow: var(--shadow);
         }
+        .card-title { font-size: 0.95rem; font-weight: 600; margin-bottom: 4px; }
+        .card-desc { font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 16px; }
 
-        /* 添加歌单表单 */
-        .add-form {
-            background: var(--card-bg);
-            border-radius: 16px;
-            padding: 24px;
-            margin-bottom: 24px;
-            backdrop-filter: blur(20px);
-            box-shadow: var(--shadow);
+        /* 表单 */
+        .form-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+        .form-group { flex: 1; min-width: 180px; }
+        .form-group label { display: block; font-size: 0.82rem; font-weight: 500; margin-bottom: 6px; }
+        input, select {
+            width: 100%; padding: 9px 12px;
+            border: 1px solid var(--border); border-radius: 9px;
+            font-size: 0.88rem; font-family: inherit; color: var(--text-primary);
+            background: #fbfbfd; transition: border 0.15s, background 0.15s;
         }
-
-        .add-form h3 {
-            font-size: 1.1rem;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .form-row {
-            display: flex;
-            gap: 12px;
-            flex-wrap: wrap;
-            align-items: flex-end;
-        }
-
-        .form-group {
-            flex: 1;
-            min-width: 200px;
-        }
-
-        .form-group label {
-            display: block;
-            font-size: 0.85rem;
-            font-weight: 500;
-            margin-bottom: 8px;
-            color: var(--text-secondary);
-        }
-
-        .form-group input,
-        .form-group select {
-            width: 100%;
-            padding: 12px 16px;
-            font-size: 0.95rem;
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            background: rgba(255, 255, 255, 0.5);
-            color: var(--text-primary);
-            transition: all 0.2s ease;
-        }
-
-        .form-group input:focus,
-        .form-group select:focus {
-            outline: none;
-            border-color: var(--accent);
-            box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15);
+        input:focus, select:focus {
+            outline: none; border-color: var(--accent); background: #fff;
+            box-shadow: 0 0 0 3px var(--accent-soft);
         }
 
         /* 按钮 */
         .btn {
-            padding: 12px 24px;
-            font-size: 0.95rem;
-            font-weight: 600;
-            border: none;
-            border-radius: 12px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
+            padding: 9px 16px; border: none; border-radius: 9px;
+            font-size: 0.85rem; font-weight: 500; cursor: pointer;
+            transition: all 0.15s; display: inline-flex; align-items: center; gap: 6px;
+            text-decoration: none;
         }
-
-        .btn-primary {
-            background: var(--accent);
-            color: white;
-        }
-
-        .btn-primary:hover {
-            background: var(--accent-hover);
-            transform: translateY(-1px);
-        }
-
-        .btn-secondary {
-            background: rgba(0, 0, 0, 0.05);
-            color: var(--text-primary);
-        }
-
-        .btn-secondary:hover {
-            background: rgba(0, 0, 0, 0.1);
-        }
-
-        .btn-success {
-            background: var(--success);
-            color: white;
-        }
-
-        .btn-success:hover {
-            background: #2db84d;
-        }
-
-        .btn-warning {
-            background: var(--warning);
-            color: white;
-        }
-
-        .btn-warning:hover {
-            background: #e68a00;
-        }
-
-        .btn-danger {
-            background: var(--danger);
-            color: white;
-        }
-
-        .btn-danger:hover {
-            background: #d62c23;
-        }
-
-        .btn-small {
-            padding: 8px 14px;
-            font-size: 0.85rem;
-        }
-
-        .btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
+        .btn-primary { background: var(--accent); color: #fff; }
+        .btn-primary:hover { background: var(--accent-hover); }
+        .btn-secondary { background: var(--bg-color); color: var(--text-primary); }
+        .btn-secondary:hover { background: #ecedf0; }
+        .btn-success { background: var(--success); color: #fff; }
+        .btn-success:hover { background: #2db84d; }
+        .btn-warning { background: #fff3e6; color: var(--warning); }
+        .btn-warning:hover { background: #ffe8cc; }
+        .btn-danger { background: #fff0f0; color: var(--danger); }
+        .btn-danger:hover { background: #ffe0e0; }
+        .btn-small { padding: 6px 12px; font-size: 0.8rem; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
 
         /* 操作栏 */
         .action-bar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            flex-wrap: wrap;
-            gap: 12px;
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 16px; gap: 12px; flex-wrap: wrap;
         }
+        .action-bar h3 { font-size: 1.05rem; font-weight: 600; }
 
-        .action-bar h2 {
-            font-size: 1.2rem;
-            font-weight: 600;
-        }
-
-        .action-btns {
-            display: flex;
-            gap: 8px;
-        }
-
-        /* 歌单列表 */
-        .playlist-list {
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-        }
-
+        /* 歌单卡片 */
+        .playlist-list { display: flex; flex-direction: column; gap: 12px; }
         .playlist-card {
-            background: var(--card-bg);
-            border-radius: 16px;
-            padding: 20px;
-            backdrop-filter: blur(20px);
-            box-shadow: var(--shadow);
-            transition: transform 0.2s ease;
+            background: var(--card-bg); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 18px 20px;
+            box-shadow: var(--shadow); transition: border-color 0.15s;
         }
-
-        .playlist-card:hover {
-            transform: translateY(-2px);
-        }
-
+        .playlist-card:hover { border-color: rgba(0,0,0,0.14); }
         .playlist-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
+            display: flex; justify-content: space-between; align-items: flex-start;
             margin-bottom: 12px;
         }
-
-        .playlist-info h3 {
-            font-size: 1.1rem;
-            font-weight: 600;
-            margin-bottom: 4px;
-        }
-
-        .playlist-info .playlist-id {
-            font-size: 0.8rem;
-            color: var(--text-secondary);
-            font-family: monospace;
-            background: rgba(0, 0, 0, 0.05);
-            padding: 2px 8px;
-            border-radius: 4px;
-        }
-
-        .playlist-status {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .status-badge {
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-
-        .status-badge.enabled {
-            background: rgba(52, 199, 89, 0.15);
-            color: var(--success);
-        }
-
-        .status-badge.disabled {
-            background: rgba(134, 134, 139, 0.15);
-            color: var(--text-secondary);
-        }
+        .playlist-info h3 { font-size: 1rem; font-weight: 600; margin-bottom: 3px; }
+        .playlist-info .playlist-id { font-size: 0.75rem; color: var(--text-secondary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg-color); padding: 2px 8px; border-radius: 4px; }
+        .status-badge { padding: 3px 10px; border-radius: 20px; font-size: 0.73rem; font-weight: 600; }
+        .status-badge.enabled { background: rgba(52,199,89,0.1); color: var(--success); }
+        .status-badge.disabled { background: var(--bg-color); color: var(--text-secondary); }
 
         .playlist-stats {
-            display: flex;
-            gap: 16px;
-            margin: 16px 0;
-            padding: 12px 16px;
-            background: rgba(0, 0, 0, 0.03);
-            border-radius: 12px;
+            display: flex; gap: 12px; margin: 14px 0;
+            padding: 12px 14px; background: var(--bg-color); border-radius: 10px;
         }
-
-        .stat-item {
-            flex: 1;
-            text-align: center;
-        }
-
-        .stat-item .stat-value {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: var(--accent);
-        }
-
-        .stat-item:nth-child(2) .stat-value {
-            color: var(--success);
-        }
-
-        .stat-item:nth-child(3) .stat-value {
-            color: var(--warning);
-        }
-
-        .stat-item:nth-child(4) .stat-value {
-            color: var(--danger);
-        }
-
-        .stat-item .stat-label {
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-            margin-top: 4px;
-        }
+        .stat-item { flex: 1; text-align: center; }
+        .stat-value { font-size: 1.3rem; font-weight: 700; color: var(--accent); }
+        .stat-item:nth-child(2) .stat-value { color: var(--success); }
+        .stat-item:nth-child(3) .stat-value { color: var(--warning); }
+        .stat-item:nth-child(4) .stat-value { color: var(--danger); }
+        .stat-label { font-size: 0.72rem; color: var(--text-secondary); margin-top: 2px; }
 
         .playlist-meta {
-            display: flex;
-            gap: 16px;
-            font-size: 0.85rem;
-            color: var(--text-secondary);
-            margin-bottom: 16px;
-            flex-wrap: wrap;
+            display: flex; gap: 14px; font-size: 0.8rem; color: var(--text-secondary);
+            margin-bottom: 14px; flex-wrap: wrap;
         }
-
-        .playlist-meta span {
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
-
         .playlist-actions {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            padding-top: 12px;
-            border-top: 1px solid var(--border);
+            display: flex; gap: 8px; flex-wrap: wrap;
+            padding-top: 12px; border-top: 1px solid var(--border);
         }
 
         /* 空状态 */
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
-            background: var(--card-bg);
-            border-radius: 16px;
-            backdrop-filter: blur(20px);
-            box-shadow: var(--shadow);
-        }
-
-        .empty-state .icon {
-            font-size: 4rem;
-            margin-bottom: 16px;
-        }
-
-        .empty-state h3 {
-            font-size: 1.2rem;
-            margin-bottom: 8px;
-        }
-
-        .empty-state p {
-            color: var(--text-secondary);
-        }
+        .empty-state { text-align: center; padding: 60px 20px; }
+        .empty-state .icon { font-size: 3rem; margin-bottom: 12px; }
+        .empty-state h3 { font-size: 1.05rem; margin-bottom: 6px; color: var(--text-primary); }
+        .empty-state p { color: var(--text-secondary); font-size: 0.85rem; }
 
         /* 加载中 */
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: var(--text-secondary);
+        .loading { text-align: center; padding: 40px; color: var(--text-secondary); }
+        .spinner {
+            display: inline-block; width: 28px; height: 28px;
+            border: 3px solid var(--border); border-top-color: var(--accent);
+            border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 10px;
         }
+        @keyframes spin { to { transform: rotate(360deg); } }
 
-        .loading .spinner {
-            display: inline-block;
-            width: 32px;
-            height: 32px;
-            border: 3px solid var(--border);
-            border-top-color: var(--accent);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-bottom: 12px;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        /* Toast 通知 */
+        /* Toast */
         .toast {
-            position: fixed;
-            bottom: 30px;
-            right: 30px;
-            padding: 16px 24px;
-            border-radius: 12px;
-            color: white;
-            font-weight: 500;
-            z-index: 1000;
-            transform: translateY(100px);
-            opacity: 0;
-            transition: all 0.3s ease;
+            position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(20px);
+            background: #1d1d1f; color: #fff; padding: 11px 20px; border-radius: 10px;
+            font-size: 0.85rem; opacity: 0; pointer-events: none; transition: all 0.25s; z-index: 999;
+            box-shadow: 0 6px 24px rgba(0,0,0,0.2);
         }
-
-        .toast.show {
-            transform: translateY(0);
-            opacity: 1;
-        }
-
-        .toast.success { background: var(--success); }
+        .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
         .toast.error { background: var(--danger); }
-        .toast.info { background: var(--accent); }
+        .toast.success { background: var(--success); }
         .toast.warning { background: var(--warning); }
 
         /* 模态框 */
         .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.5);
-            z-index: 1000;
-            align-items: center;
-            justify-content: center;
+            display: none; position: fixed; top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.4); z-index: 1000;
+            align-items: center; justify-content: center;
         }
-
-        .modal.show {
-            display: flex;
-        }
-
+        .modal.show { display: flex; }
         .modal-content {
-            background: white;
-            border-radius: 20px;
-            padding: 28px;
-            max-width: 600px;
-            width: 90%;
-            max-height: 80vh;
-            overflow-y: auto;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            background: #fff; border-radius: var(--radius);
+            padding: 24px; max-width: 600px; width: 90%;
+            max-height: 80vh; overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
         }
-
         .modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 16px;
-            border-bottom: 1px solid var(--border);
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--border);
         }
-
-        .modal-header h3 {
-            font-size: 1.2rem;
-        }
-
+        .modal-header h3 { font-size: 1.05rem; font-weight: 600; }
         .modal-close {
-            background: rgba(0, 0, 0, 0.05);
-            border: none;
-            font-size: 1.2rem;
-            cursor: pointer;
-            color: var(--text-secondary);
-            width: 32px;
-            height: 32px;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.2s ease;
+            background: var(--bg-color); border: none; font-size: 1.1rem;
+            cursor: pointer; color: var(--text-secondary);
+            width: 30px; height: 30px; border-radius: 8px;
+            display: flex; align-items: center; justify-content: center; transition: all 0.15s;
         }
+        .modal-close:hover { background: var(--danger); color: #fff; }
+        .modal-body { margin-bottom: 18px; }
+        .modal-footer { display: flex; gap: 10px; justify-content: flex-end; }
 
-        .modal-close:hover {
-            background: var(--danger);
-            color: white;
-        }
-
-        .modal-body {
-            margin-bottom: 20px;
-        }
-
-        .modal-footer {
-            display: flex;
-            gap: 12px;
-            justify-content: flex-end;
-        }
+        /* 模态框内表格 */
+        .modal-table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
+        .modal-table th, .modal-table td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+        .modal-table th { background: var(--bg-color); font-weight: 600; color: var(--text-secondary); font-size: 0.75rem; position: sticky; top: 0; }
 
         /* 响应式 */
-        @media (max-width: 768px) {
-            .header h1 {
-                font-size: 1.5rem;
-            }
-
-            .header-back {
-                position: static;
-                display: inline-block;
-                margin-bottom: 16px;
-            }
-
-            .form-row {
-                flex-direction: column;
-            }
-
-            .playlist-stats {
-                flex-wrap: wrap;
-            }
-
-            .stat-item {
-                flex: 1 1 calc(33% - 8px);
-            }
-
-            .playlist-actions {
-                justify-content: center;
-            }
+        @media (max-width: 860px) {
+            .sidebar { position: fixed; left: -260px; top: 0; z-index: 100; transition: left 0.25s; box-shadow: 2px 0 20px rgba(0,0,0,0.1); }
+            .sidebar.open { left: 0; }
+            .menu-toggle { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; border: 1px solid var(--border); border-radius: 9px; background: #fff; cursor: pointer; font-size: 1.1rem; }
+            .content { padding: 18px 16px 70px; }
+            .form-row { flex-direction: column; }
+            .playlist-stats { flex-wrap: wrap; }
+            .stat-item { flex: 1 1 calc(33% - 8px); }
+            .playlist-actions { justify-content: center; }
+            .backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 99; }
+            .backdrop.show { display: block; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <!-- 头部 -->
-        <div class="header">
-            <a href="/" class="header-back">← 返回首页</a>
-            <h1>📋 歌单订阅管理</h1>
-            <p>添加网易云歌单，自动增量下载新歌曲</p>
+<div class="backdrop" id="backdrop" onclick="toggleSidebar()"></div>
+<div class="app">
+    <!-- 侧边栏 -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header"><h1>🎵 Music Bot</h1><p>配置中心</p></div>
+        <nav class="nav-list">
+            <a class="nav-item" href="/"><span class="nav-icon">⚙️</span><span class="nav-label">配置管理</span></a>
+            <a class="nav-item active" href="/playlists"><span class="nav-icon">📋</span><span class="nav-label">歌单订阅</span></a>
+            <a class="nav-item" href="/logs"><span class="nav-icon">📜</span><span class="nav-label">日志查看</span></a>
+            <a class="nav-item" href="/account"><span class="nav-icon">👤</span><span class="nav-label">账号管理</span></a>
+        </nav>
+        <div class="sidebar-footer">
+            <a href="/" class="">⚙️ 配置管理</a>
+            <a href="/logs" class="">📜 日志查看</a>
+            <a href="/account" class="">👤 账号管理</a>
+            <a href="/logout" class="danger">🚪 退出登录</a>
         </div>
+    </aside>
 
-        <!-- 添加歌单表单 -->
-        <div class="add-form">
-            <h3>➕ 添加订阅歌单</h3>
-            <div class="form-row">
-                <div class="form-group" style="flex: 2;">
-                    <label>歌单链接或ID</label>
-                    <input type="text" id="playlistInput" placeholder="https://music.163.com/#/playlist?id=xxx 或直接输入 ID">
+    <!-- 内容区 -->
+    <main class="content">
+        <div class="content-inner">
+            <div class="content-header">
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
+                    <h2>📋 歌单订阅</h2>
                 </div>
-                <div class="form-group" style="flex: 1;">
-                    <label>检查间隔</label>
-                    <select id="checkInterval">
-                        <option value="1800">30 分钟</option>
-                        <option value="3600" selected>1 小时</option>
-                        <option value="7200">2 小时</option>
-                        <option value="21600">6 小时</option>
-                        <option value="43200">12 小时</option>
-                        <option value="86400">24 小时</option>
-                    </select>
-                </div>
-                <div class="form-group" style="flex: 0; align-self: flex-end;">
-                    <button class="btn btn-primary" onclick="addPlaylist()" id="addBtn">添加</button>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn btn-success btn-small" onclick="syncAllPlaylists()">🔄 同步全部</button>
+                    <button class="btn btn-secondary btn-small" onclick="loadPlaylists()">刷新</button>
                 </div>
             </div>
-        </div>
 
-        <!-- 操作栏 -->
-        <div class="action-bar">
-            <h2>🎵 已订阅歌单</h2>
-            <div class="action-btns">
-                <button class="btn btn-success btn-small" onclick="syncAllPlaylists()">🔄 同步全部</button>
-                <button class="btn btn-secondary btn-small" onclick="loadPlaylists()">刷新</button>
+            <!-- 添加歌单 -->
+            <div class="card">
+                <div class="card-title">添加订阅歌单</div>
+                <div class="card-desc">输入网易云歌单链接或 ID，Bot 会自动检查并下载新增歌曲。</div>
+                <div class="form-row">
+                    <div class="form-group" style="flex: 2;">
+                        <label>歌单链接或 ID</label>
+                        <input type="text" id="playlistInput" placeholder="https://music.163.com/#/playlist?id=xxx 或直接输入 ID">
+                    </div>
+                    <div class="form-group" style="flex: 1;">
+                        <label>检查间隔</label>
+                        <select id="checkInterval">
+                            <option value="1800">30 分钟</option>
+                            <option value="3600" selected>1 小时</option>
+                            <option value="7200">2 小时</option>
+                            <option value="21600">6 小时</option>
+                            <option value="43200">12 小时</option>
+                            <option value="86400">24 小时</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex: 0; align-self: flex-end;">
+                        <button class="btn btn-primary" onclick="addPlaylist()" id="addBtn">添加</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 歌单列表 -->
+            <div id="playlistContainer">
+                <div class="loading"><div class="spinner"></div><p>加载中...</p></div>
             </div>
         </div>
+    </main>
+</div>
 
-        <!-- 歌单列表 -->
-        <div id="playlistContainer">
-            <div class="loading">
-                <div class="spinner"></div>
-                <p>加载中...</p>
-            </div>
+<!-- 检查更新结果模态框 -->
+<div class="modal" id="checkModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>📊 检查结果</h3>
+            <button class="modal-close" onclick="closeModal('checkModal')">×</button>
+        </div>
+        <div class="modal-body" id="checkModalBody"></div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('checkModal')">关闭</button>
+            <button class="btn btn-primary" id="checkModalSyncBtn" style="display:none;">开始下载</button>
         </div>
     </div>
+</div>
 
-    <!-- 检查更新结果模态框 -->
-    <div class="modal" id="checkModal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>📊 检查结果</h3>
-                <button class="modal-close" onclick="closeModal('checkModal')">×</button>
-            </div>
-            <div class="modal-body" id="checkModalBody">
-                <!-- 动态内容 -->
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('checkModal')">关闭</button>
-                <button class="btn btn-primary" id="checkModalSyncBtn" style="display: none;">开始下载</button>
-            </div>
+<!-- 失败歌曲模态框 -->
+<div class="modal" id="failedModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>⚠️ 下载失败的歌曲</h3>
+            <button class="modal-close" onclick="closeModal('failedModal')">×</button>
+        </div>
+        <div class="modal-body" id="failedModalBody"></div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('failedModal')">关闭</button>
+            <button class="btn btn-warning" id="failedModalRetryBtn">🔄 重试全部</button>
+            <button class="btn btn-primary" id="failedModalExportBtn">📥 导出列表</button>
         </div>
     </div>
+</div>
 
-    <!-- 失败歌曲模态框 -->
-    <div class="modal" id="failedModal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>⚠️ 下载失败的歌曲</h3>
-                <button class="modal-close" onclick="closeModal('failedModal')">×</button>
+<div class="toast" id="toast"></div>
+
+<script>
+function showToast(message, type = 'info') {
+    const toast = document.getElementById('toast');
+    toast.textContent = message; toast.className = `toast ${type} show`;
+    setTimeout(() => toast.classList.remove('show'), 3000);
+}
+function formatTime(dateString) {
+    if (!dateString) return '从未';
+    return new Date(dateString).toLocaleString('zh-CN');
+}
+function formatInterval(seconds) {
+    if (seconds < 3600) return Math.floor(seconds / 60) + ' 分钟';
+    if (seconds < 86400) return Math.floor(seconds / 3600) + ' 小时';
+    return Math.floor(seconds / 86400) + ' 天';
+}
+function toggleSidebar(open) {
+    const sb = document.getElementById('sidebar');
+    const bd = document.getElementById('backdrop');
+    const willOpen = open === undefined ? !sb.classList.contains('open') : open;
+    sb.classList.toggle('open', willOpen); bd.classList.toggle('show', willOpen);
+}
+
+async function fetchWithAuth(url, options = {}) {
+    const response = await fetch(url, options);
+    if (response.status === 401) { window.location.href = '/login'; throw new Error('未登录'); }
+    return response;
+}
+
+async function loadPlaylists() {
+    const container = document.getElementById('playlistContainer');
+    container.innerHTML = '<div class="loading"><div class="spinner"></div><p>加载中...</p></div>';
+    try {
+        const response = await fetchWithAuth('/api/playlists');
+        const result = await response.json();
+        result.success ? renderPlaylists(result.data) : (container.innerHTML = `<div class="empty-state"><div class="icon">❌</div><h3>加载失败</h3><p>${result.error}</p></div>`);
+    } catch (e) {
+        console.error(e); container.innerHTML = '<div class="empty-state"><div class="icon">❌</div><h3>加载失败</h3><p>请检查网络连接</p></div>';
+    }
+}
+
+function renderPlaylists(playlists) {
+    const c = document.getElementById('playlistContainer');
+    if (!playlists || !playlists.length) {
+        c.innerHTML = `<div class="empty-state"><div class="icon">📭</div><h3>还没有订阅歌单</h3><p>添加一个网易云歌单开始自动同步下载吧~</p></div>`;
+        return;
+    }
+    c.innerHTML = '<div class="playlist-list">' + playlists.map(p => `
+        <div class="playlist-card" data-id="${p.playlist_id}">
+            <div class="playlist-header">
+                <div class="playlist-info">
+                    <h3>${p.playlist_name || '未知歌单'}</h3>
+                    <div class="playlist-id">ID: ${p.playlist_id}</div>
+                </div>
+                <span class="status-badge ${p.enabled ? 'enabled' : 'disabled'}">${p.enabled ? '● 已启用' : '○ 已禁用'}</span>
             </div>
-            <div class="modal-body" id="failedModalBody">
-                <!-- 动态内容 -->
+            <div class="playlist-stats">
+                <div class="stat-item"><div class="stat-value">${p.stats?.total || 0}</div><div class="stat-label">总歌曲</div></div>
+                <div class="stat-item"><div class="stat-value">${p.stats?.downloaded || 0}</div><div class="stat-label">已下载</div></div>
+                <div class="stat-item"><div class="stat-value">${p.stats?.pending || 0}</div><div class="stat-label">待下载</div></div>
+                <div class="stat-item"><div class="stat-value">${p.stats?.failed || 0}</div><div class="stat-label">失败</div></div>
             </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('failedModal')">关闭</button>
-                <button class="btn btn-warning" id="failedModalRetryBtn">🔄 重试全部</button>
-                <button class="btn btn-primary" id="failedModalExportBtn">📥 导出列表</button>
+            <div class="playlist-meta">
+                <span>🕐 ${formatTime(p.last_check_time)}</span>
+                <span>⏱️ ${formatInterval(p.check_interval)}</span>
+                <span>📅 ${formatTime(p.created_at).split(' ')[0]}</span>
+            </div>
+            <div class="playlist-actions">
+                <button class="btn btn-primary btn-small" onclick="syncPlaylist('${p.playlist_id}')">🔄 同步下载</button>
+                <button class="btn btn-secondary btn-small" onclick="checkPlaylist('${p.playlist_id}')">🔍 检查更新</button>
+                <button class="btn btn-secondary btn-small" onclick="refreshPlaylistMetadata('${p.playlist_id}','${p.playlist_name || '未知'}')" title="刷新已下载歌曲的元数据标签">🏷️ 刷新标签</button>
+                ${(p.stats?.failed || 0) > 0 ? `<button class="btn btn-danger btn-small" onclick="showFailedSongs('${p.playlist_id}','${p.playlist_name || '未知'}')">⚠️ 失败 (${p.stats.failed})</button>` : ''}
+                <button class="btn btn-secondary btn-small" onclick="togglePlaylist('${p.playlist_id}',${!p.enabled})">${p.enabled ? '⏸️ 禁用' : '▶️ 启用'}</button>
+                <button class="btn btn-danger btn-small" onclick="deletePlaylist('${p.playlist_id}')">🗑️ 删除</button>
             </div>
         </div>
-    </div>
+    `).join('') + '</div>';
+}
 
-    <!-- Toast 通知 -->
-    <div class="toast" id="toast"></div>
+async function addPlaylist() {
+    const input = document.getElementById('playlistInput').value.trim();
+    const interval = document.getElementById('checkInterval').value;
+    if (!input) { showToast('请输入歌单链接或 ID', 'warning'); return; }
+    try {
+        const r = await fetchWithAuth('/api/playlists', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ playlist_url: input, playlist_id: /^\d+$/.test(input) ? input : '', check_interval: parseInt(interval) }) });
+        const result = await r.json();
+        if (result.success) { showToast(`成功添加: ${result.data.playlist_name}`, 'success'); document.getElementById('playlistInput').value = ''; loadPlaylists(); }
+        else showToast(result.error || '添加失败', 'error');
+    } catch (e) { console.error(e); showToast('添加失败', 'error'); }
+}
 
-    <script>
-        // 显示 Toast 通知
-        function showToast(message, type = 'info') {
-            const toast = document.getElementById('toast');
-            toast.textContent = message;
-            toast.className = `toast ${type} show`;
-            setTimeout(() => {
-                toast.classList.remove('show');
-            }, 3000);
+async function syncPlaylist(id) {
+    showToast('开始同步...', 'info');
+    try {
+        const r = await fetchWithAuth(`/api/playlists/${id}/sync`, { method:'POST' });
+        const d = await r.json();
+        if (d.success) { const data = d.data; showToast(data.new_songs === 0 ? `没有新歌曲` : `成功下载 ${data.downloaded_songs}/${data.new_songs} 首`, data.new_songs > 0 ? 'success' : 'info'); loadPlaylists(); }
+        else showToast(d.error || '同步失败', 'error');
+    } catch (e) { console.error(e); showToast('同步失败', 'error'); }
+}
+
+async function checkPlaylist(id) {
+    showToast('正在检查...', 'info');
+    try {
+        const r = await fetchWithAuth(`/api/playlists/${id}/check`, { method:'POST' });
+        const d = await r.json();
+        if (!d.success) { showToast(d.error || '检查失败', 'error'); return; }
+        const data = d.data;
+        const body = document.getElementById('checkModalBody');
+        const syncBtn = document.getElementById('checkModalSyncBtn');
+        let songsHtml = '';
+        if (data.new_song_list?.length > 0) {
+            songsHtml = `<div style="margin-top:14px;text-align:left;"><strong style="color:var(--warning);">🆕 新增歌曲:</strong><ul style="margin-top:10px;padding-left:0;list-style:none;">${data.new_song_list.slice(0, 20).map(s => `<li style="padding:8px 12px;background:var(--bg-color);border-radius:8px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;"><span>${s.name}</span><span style="color:var(--text-secondary);font-size:0.83rem;">${s.artist}</span></li>`).join('')}${data.new_songs > 20 ? `<li style="text-align:center;color:var(--text-secondary);padding:10px;">...还有 ${data.new_songs - 20} 首</li>` : ''}</ul></div>`;
         }
+        body.innerHTML = `
+            <div style="text-align:center;">
+                <h2 style="font-size:1.15rem;margin-bottom:14px;">${data.playlist_name}</h2>
+                <div style="display:flex;justify-content:center;gap:24px;margin:16px 0;">
+                    <div style="text-align:center;"><div style="font-size:1.8rem;font-weight:700;color:var(--accent);">${data.total_songs}</div><div style="font-size:0.78rem;color:var(--text-secondary);">总歌曲</div></div>
+                    <div style="text-align:center;"><div style="font-size:1.8rem;font-weight:700;color:var(--success);">${data.downloaded_songs}</div><div style="font-size:0.78rem;color:var(--text-secondary);">已下载</div></div>
+                    <div style="text-align:center;"><div style="font-size:1.8rem;font-weight:700;color:${data.new_songs > 0 ? 'var(--warning)' : 'var(--text-secondary)'};">${data.new_songs}</div><div style="font-size:0.78rem;color:var(--text-secondary);">新增</div></div>
+                </div>${songsHtml}
+            </div>`;
+        if (data.new_songs > 0) { syncBtn.style.display = ''; syncBtn.onclick = () => { closeModal('checkModal'); syncPlaylist(id); }; }
+        else syncBtn.style.display = 'none';
+        document.getElementById('checkModal').classList.add('show');
+    } catch (e) { console.error(e); showToast('检查失败', 'error'); }
+}
 
-        // 格式化时间
-        function formatTime(dateString) {
-            if (!dateString) return '从未';
-            const date = new Date(dateString);
-            return date.toLocaleString('zh-CN');
+async function togglePlaylist(id, enabled) {
+    try {
+        const r = await fetchWithAuth(`/api/playlists/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ enabled }) });
+        const d = await r.json(); d.success ? (showToast(enabled ? '已启用' : '已禁用', 'success'), loadPlaylists()) : showToast(d.error || '操作失败', 'error');
+    } catch (e) { showToast('操作失败', 'error'); }
+}
+
+async function deletePlaylist(id) {
+    if (!confirm('确定删除？不会删除已下载的歌曲。')) return;
+    try {
+        const r = await fetchWithAuth(`/api/playlists/${id}`, { method:'DELETE' });
+        const d = await r.json(); d.success ? (showToast('已删除', 'success'), loadPlaylists()) : showToast(d.error || '删除失败', 'error');
+    } catch (e) { showToast('删除失败', 'error'); }
+}
+
+async function syncAllPlaylists() {
+    showToast('开始同步所有歌单...', 'info');
+    try {
+        const r = await fetchWithAuth('/api/playlists/sync-all', { method:'POST' });
+        const d = await r.json();
+        d.success ? (showToast(`完成! 发现 ${d.data.total_new_songs} 首新歌, 下载 ${d.data.total_downloaded} 首`, 'success'), loadPlaylists()) : showToast(d.error || '失败', 'error');
+    } catch (e) { showToast('失败', 'error'); }
+}
+
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+
+let currentFailed = {};
+async function showFailedSongs(id, name) {
+    currentFailed = { id, name };
+    try {
+        const r = await fetchWithAuth(`/api/playlists/${id}/failed-songs`);
+        const d = await r.json();
+        if (!d.success) { showToast(d.error || '获取失败', 'error'); return; }
+        const songs = d.data;
+        const body = document.getElementById('failedModalBody');
+        const retryBtn = document.getElementById('failedModalRetryBtn');
+        const exportBtn = document.getElementById('failedModalExportBtn');
+        if (!songs?.length) {
+            body.innerHTML = '<div style="text-align:center;padding:20px;"><div style="font-size:2.5rem;">✅</div><h3>没有失败的歌曲</h3></div>'; retryBtn.style.display = 'none'; exportBtn.style.display = 'none';
+        } else {
+            body.innerHTML = `
+                <div style="margin-bottom:12px;"><strong>歌单:</strong> ${name}<span style="color:var(--text-secondary);margin-left:6px;">(${songs.length} 首失败)</span></div>
+                <div style="max-height:380px;overflow-y:auto;">
+                    <table class="modal-table"><thead><tr><th>歌曲</th><th>艺术家</th><th>原因</th><th style="text-align:center;">重试</th></tr></thead>
+                    <tbody>${songs.map(s => `<tr><td><div style="font-weight:500;">${s.song_name||'未知'}</div><div style="font-size:0.72rem;color:var(--text-secondary);">ID:${s.song_id}</div></td><td style="color:var(--text-secondary);">${s.artist||'未知'}</td><td><span style="color:var(--danger);font-size:0.8rem;background:rgba(255,59,48,0.08);padding:3px 8px;border-radius:4px;">${formatFailReason(s.fail_reason)}</span>${s.retry_count > 1 ? `<span style="color:var(--text-secondary);font-size:0.72rem;margin-left:4px;">(${s.retry_count}次)</span>` : ''}</td><td style="text-align:center;"><button class="btn btn-small btn-secondary" onclick="retrySingleSong('${id}','${s.song_id}')">🔄</button></td></tr>`).join('')}</tbody></table>
+                </div>`;
+            retryBtn.style.display = ''; retryBtn.onclick = () => retryAllFailedSongs(id);
+            exportBtn.style.display = ''; exportBtn.onclick = () => exportFailedSongs(songs, name);
         }
+        document.getElementById('failedModal').classList.add('show');
+    } catch (e) { showToast('获取失败', 'error'); }
+}
 
-        // 格式化间隔
-        function formatInterval(seconds) {
-            if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`;
-            if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时`;
-            return `${Math.floor(seconds / 86400)} 天`;
-        }
+function formatFailReason(reason) {
+    if (!reason) return '未知错误';
+    for (const [k,v] of Object.entries({'无法获取下载链接，可能需要 VIP 或配置 cookies':'VIP/版权限制','无法获取歌曲信息':'信息获取失败','下载失败':'网络下载失败'})) { if (reason.includes(k)) return v; }
+    return reason.length > 30 ? reason.slice(0,27)+'...' : reason;
+}
 
-        // 全局请求处理
-        async function fetchWithAuth(url, options = {}) {
-            const response = await fetch(url, options);
-            if (response.status === 401) {
-                window.location.href = '/login';
-                throw new Error('未登录');
-            }
-            return response;
-        }
+async function retrySingleSong(pid, sid) {
+    showToast('重试中...', 'info');
+    try {
+        await fetchWithAuth(`/api/playlists/${pid}/clear-failed`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({song_id:sid}) });
+        const r = await fetchWithAuth(`/api/playlists/${pid}/sync`, { method:'POST' });
+        const d = await r.json();
+        d.success ? (showToast('完成', 'success'), showFailedSongs(pid, currentFailed.name), loadPlaylists()) : showToast(d.error || '失败', 'error');
+    } catch (e) { showToast('失败', 'error'); }
+}
 
-        // 加载歌单列表
-        async function loadPlaylists() {
-            const container = document.getElementById('playlistContainer');
-            container.innerHTML = '<div class="loading"><div class="spinner"></div><p>加载中...</p></div>';
+async function retryAllFailedSongs(id) {
+    if (!confirm('确定重试所有失败歌曲？')) return;
+    showToast('重试中...', 'info');
+    try {
+        const r = await fetchWithAuth(`/api/playlists/${id}/retry-failed`, { method:'POST' });
+        const d = await r.json();
+        d.success ? (showToast(`完成: ${d.data.success}/${d.data.retried} 成功`, d.data.still_failed > 0 ? 'warning' : 'success'), closeModal('failedModal'), loadPlaylists()) : showToast(d.error || '失败', 'error');
+    } catch (e) { showToast('失败', 'error'); }
+}
 
-            try {
-                const response = await fetchWithAuth('/api/playlists');
-                const result = await response.json();
+function exportFailedSongs(songs, name) {
+    const blob = new Blob([JSON.stringify({ playlist_name:name, export_time:new Date().toLocaleString('zh-CN'), total_failed:songs.length, songs:songs.map(s=>({song_id:s.song_id,song_name:s.song_name,artist:s.artist,album:s.album,fail_reason:s.fail_reason,fail_time:s.fail_time,retry_count:s.retry_count})) }, null, 2)], {type:'application/json'});
+    const a = document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`failed_${name}_${new Date().toISOString().split('T')[0]}.json`; a.click(); URL.revokeObjectURL(a.href); showToast('已导出', 'success');
+}
 
-                if (result.success) {
-                    renderPlaylists(result.data);
-                } else {
-                    container.innerHTML = `<div class="empty-state"><div class="icon">❌</div><h3>加载失败</h3><p>${result.error}</p></div>`;
-                }
-            } catch (error) {
-                console.error('加载歌单失败:', error);
-                container.innerHTML = '<div class="empty-state"><div class="icon">❌</div><h3>加载失败</h3><p>请检查网络连接</p></div>';
-            }
-        }
+async function refreshPlaylistMetadata(id, name) {
+    if (!confirm(`确定刷新 "${name}" 的元数据标签？只更新标签不重新下载。`)) return;
+    showToast('刷新中...', 'info');
+    try {
+        const r = await fetchWithAuth(`/api/playlists/${id}/refresh-metadata`, { method:'POST' });
+        const d = await r.json();
+        if (d.success) {
+            const s = d.data; showToast(`完成: 更新${s.updated_songs}, 跳过${s.skipped_songs}, 失败${s.failed_songs}`, s.failed_songs>0?'warning':'success');
+            if (s.failed_songs > 0 || s.skipped_songs > 0) showMetadataResult(d.data);
+        } else showToast(d.error || '失败', 'error');
+    } catch (e) { showToast('失败', 'error'); }
+}
 
-        // 渲染歌单列表
-        function renderPlaylists(playlists) {
-            const container = document.getElementById('playlistContainer');
+function showMetadataResult(data) {
+    const body = document.getElementById('checkModalBody');
+    let detailsHtml = '';
+    const failed = (data.details||[]).filter(d => d.status==='failed'||d.status==='skipped');
+    if (failed.length) {
+        detailsHtml = `<div style="margin-top:14px;max-height:280px;overflow-y:auto;"><table class="modal-table"><thead><tr><th>歌曲</th><th>状态</th><th>原因</th></tr></thead><tbody>${failed.map(i=>`<tr><td>${i.song_name||i.song_id||'?'}</td><td><span style="color:${i.status==='failed'?'var(--danger)':'var(--text-secondary)'};">${i.status==='失败'?'❌':'⏭️'} ${i.status}</span></td><td style="color:var(--text-secondary);font-size:0.78rem;">${i.reason||'-'}</td></tr>`).join('')}</tbody></table></div>`;
+    }
+    body.innerHTML = `<div style="text-align:center;"><h2 style="font-size:1.1rem;margin-bottom:12px;">🏷️ 元数据刷新结果</h2><p style="color:var(--text-secondary);margin-bottom:12px;">${data.playlist_name||''}</p><div style="display:flex;justify-content:center;gap:20px;margin:16px 0;"><div style="text-align:center;"><div style="font-size:1.6rem;font-weight:700;color:var(--accent);">${data.total_songs}</div><div style="font-size:0.75rem;color:var(--text-secondary);">总数</div></div><div style="text-align:center;"><div style="font-size:1.6rem;font-weight:700;color:var(--success);">${data.updated_songs}</div><div style="font-size:0.75rem;color:var(--text-secondary);">已更新</div></div><div style="text-align:center;"><div style="font-size:1.6rem;font-weight:700;color:var(--text-secondary);">${data.skipped_songs}</div><div style="font-size:0.75rem;color:var(--text-secondary);">跳过</div></div><div style="text-align:center;"><div style="font-size:1.6rem;font-weight:700;color:var(--danger);">${data.failed_songs}</div><div style="font-size:0.75rem;color:var(--text-secondary);">失败</div></div></div>${detailsHtml}</div>`;
+    document.getElementById('checkModalSyncBtn').style.display='none';
+    document.getElementById('checkModal').classList.add('show');
+}
 
-            if (!playlists || playlists.length === 0) {
-                container.innerHTML = `
-                    <div class="empty-state">
-                        <div class="icon">📭</div>
-                        <h3>还没有订阅歌单</h3>
-                        <p>添加一个网易云歌单开始自动同步下载吧~</p>
-                    </div>
-                `;
-                return;
-            }
-
-            container.innerHTML = '<div class="playlist-list">' + playlists.map(playlist => `
-                <div class="playlist-card" data-id="${playlist.playlist_id}">
-                    <div class="playlist-header">
-                        <div class="playlist-info">
-                            <h3>${playlist.playlist_name || '未知歌单'}</h3>
-                            <div class="playlist-id">ID: ${playlist.playlist_id}</div>
-                        </div>
-                        <div class="playlist-status">
-                            <span class="status-badge ${playlist.enabled ? 'enabled' : 'disabled'}">
-                                ${playlist.enabled ? '● 已启用' : '○ 已禁用'}
-                            </span>
-                        </div>
-                    </div>
-                    
-                    <div class="playlist-stats">
-                        <div class="stat-item">
-                            <div class="stat-value">${playlist.stats?.total || 0}</div>
-                            <div class="stat-label">总歌曲</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-value">${playlist.stats?.downloaded || 0}</div>
-                            <div class="stat-label">已下载</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-value">${playlist.stats?.pending || 0}</div>
-                            <div class="stat-label">待下载</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-value">${playlist.stats?.failed || 0}</div>
-                            <div class="stat-label">失败</div>
-                        </div>
-                    </div>
-                    
-                    <div class="playlist-meta">
-                        <span>🕐 ${formatTime(playlist.last_check_time)}</span>
-                        <span>⏱️ ${formatInterval(playlist.check_interval)}</span>
-                        <span>📅 ${formatTime(playlist.created_at).split(' ')[0]}</span>
-                    </div>
-                    
-                    <div class="playlist-actions">
-                        <button class="btn btn-primary btn-small" onclick="syncPlaylist('${playlist.playlist_id}')">
-                            🔄 同步下载
-                        </button>
-                        <button class="btn btn-warning btn-small" onclick="checkPlaylist('${playlist.playlist_id}')">
-                            🔍 检查更新
-                        </button>
-                        <button class="btn btn-secondary btn-small" onclick="refreshPlaylistMetadata('${playlist.playlist_id}', '${playlist.playlist_name || '未知歌单'}')" title="只刷新已下载歌曲的元数据标签，不重新下载">
-                            🏷️ 刷新标签
-                        </button>
-                        ${(playlist.stats?.failed || 0) > 0 ? `
-                        <button class="btn btn-danger btn-small" onclick="showFailedSongs('${playlist.playlist_id}', '${playlist.playlist_name || '未知歌单'}')">
-                            ⚠️ 查看失败 (${playlist.stats.failed})
-                        </button>
-                        ` : ''}
-                        <button class="btn btn-secondary btn-small" onclick="togglePlaylist('${playlist.playlist_id}', ${!playlist.enabled})">
-                            ${playlist.enabled ? '⏸️ 禁用' : '▶️ 启用'}
-                        </button>
-                        <button class="btn btn-danger btn-small" onclick="deletePlaylist('${playlist.playlist_id}')">
-                            🗑️ 删除
-                        </button>
-                    </div>
-                </div>
-            `).join('') + '</div>';
-        }
-
-        // 添加歌单
-        async function addPlaylist() {
-            const input = document.getElementById('playlistInput').value.trim();
-            const checkInterval = document.getElementById('checkInterval').value;
-
-            if (!input) {
-                showToast('请输入歌单链接或ID', 'warning');
-                return;
-            }
-
-            try {
-                const response = await fetchWithAuth('/api/playlists', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        playlist_url: input,
-                        playlist_id: /^\d+$/.test(input) ? input : '',
-                        check_interval: parseInt(checkInterval)
-                    })
-                });
-
-                const result = await response.json();
-
-                if (result.success) {
-                    showToast(`成功添加歌单: ${result.data.playlist_name}`, 'success');
-                    document.getElementById('playlistInput').value = '';
-                    loadPlaylists();
-                } else {
-                    showToast(result.error || '添加失败', 'error');
-                }
-            } catch (error) {
-                console.error('添加歌单失败:', error);
-                showToast('添加歌单失败', 'error');
-            }
-        }
-
-        // 同步单个歌单
-        async function syncPlaylist(playlistId) {
-            showToast('开始同步歌单...', 'info');
-
-            try {
-                const response = await fetchWithAuth(`/api/playlists/${playlistId}/sync`, {
-                    method: 'POST'
-                });
-
-                const result = await response.json();
-
-                if (result.success) {
-                    const data = result.data;
-                    if (data.new_songs === 0) {
-                        showToast(`歌单 "${data.playlist_title}" 没有新歌曲`, 'info');
-                    } else {
-                        showToast(`成功下载 ${data.downloaded_songs}/${data.new_songs} 首新歌曲`, 'success');
-                    }
-                    loadPlaylists();
-                } else {
-                    showToast(result.error || '同步失败', 'error');
-                }
-            } catch (error) {
-                console.error('同步歌单失败:', error);
-                showToast('同步歌单失败', 'error');
-            }
-        }
-
-        // 检查歌单更新
-        async function checkPlaylist(playlistId) {
-            showToast('正在检查更新...', 'info');
-
-            try {
-                const response = await fetchWithAuth(`/api/playlists/${playlistId}/check`, {
-                    method: 'POST'
-                });
-
-                const result = await response.json();
-
-                if (result.success) {
-                    const data = result.data;
-                    const modalBody = document.getElementById('checkModalBody');
-                    const syncBtn = document.getElementById('checkModalSyncBtn');
-
-                    let songsHtml = '';
-                    if (data.new_song_list && data.new_song_list.length > 0) {
-                        songsHtml = `
-                            <div style="margin-top: 16px; text-align: left;">
-                                <strong style="color: var(--warning);">🆕 新增歌曲:</strong>
-                                <ul style="margin-top: 12px; padding-left: 0; list-style: none;">
-                                    ${data.new_song_list.map(s => `
-                                        <li style="padding: 10px 14px; background: rgba(0,0,0,0.03); border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
-                                            <span>${s.name}</span>
-                                            <span style="color: var(--text-secondary); font-size: 0.85rem;">${s.artist}</span>
-                                        </li>
-                                    `).join('')}
-                                    ${data.new_songs > 20 ? `<li style="text-align: center; color: var(--text-secondary); padding: 10px;">...还有 ${data.new_songs - 20} 首</li>` : ''}
-                                </ul>
-                            </div>
-                        `;
-                    }
-
-                    modalBody.innerHTML = `
-                        <div style="text-align: center;">
-                            <h2 style="font-size: 1.3rem; margin-bottom: 16px;">${data.playlist_name}</h2>
-                            <div style="display: flex; justify-content: center; gap: 20px; margin: 20px 0;">
-                                <div style="text-align: center;">
-                                    <div style="font-size: 2rem; font-weight: 700; color: var(--accent);">${data.total_songs}</div>
-                                    <div style="font-size: 0.85rem; color: var(--text-secondary);">总歌曲</div>
-                                </div>
-                                <div style="text-align: center;">
-                                    <div style="font-size: 2rem; font-weight: 700; color: var(--success);">${data.downloaded_songs}</div>
-                                    <div style="font-size: 0.85rem; color: var(--text-secondary);">已下载</div>
-                                </div>
-                                <div style="text-align: center;">
-                                    <div style="font-size: 2rem; font-weight: 700; color: ${data.new_songs > 0 ? 'var(--warning)' : 'var(--text-secondary)'};">${data.new_songs}</div>
-                                    <div style="font-size: 0.85rem; color: var(--text-secondary);">新增</div>
-                                </div>
-                            </div>
-                            ${songsHtml}
-                        </div>
-                    `;
-
-                    if (data.new_songs > 0) {
-                        syncBtn.style.display = 'block';
-                        syncBtn.onclick = () => {
-                            closeModal('checkModal');
-                            syncPlaylist(playlistId);
-                        };
-                    } else {
-                        syncBtn.style.display = 'none';
-                    }
-
-                    document.getElementById('checkModal').classList.add('show');
-                } else {
-                    showToast(result.error || '检查失败', 'error');
-                }
-            } catch (error) {
-                console.error('检查更新失败:', error);
-                showToast('检查更新失败', 'error');
-            }
-        }
-
-        // 启用/禁用歌单
-        async function togglePlaylist(playlistId, enabled) {
-            try {
-                const response = await fetchWithAuth(`/api/playlists/${playlistId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ enabled })
-                });
-
-                const result = await response.json();
-
-                if (result.success) {
-                    showToast(enabled ? '歌单已启用' : '歌单已禁用', 'success');
-                    loadPlaylists();
-                } else {
-                    showToast(result.error || '操作失败', 'error');
-                }
-            } catch (error) {
-                console.error('操作失败:', error);
-                showToast('操作失败', 'error');
-            }
-        }
-
-        // 删除歌单
-        async function deletePlaylist(playlistId) {
-            if (!confirm('确定要删除这个订阅歌单吗？这不会删除已下载的歌曲。')) {
-                return;
-            }
-
-            try {
-                const response = await fetchWithAuth(`/api/playlists/${playlistId}`, {
-                    method: 'DELETE'
-                });
-
-                const result = await response.json();
-
-                if (result.success) {
-                    showToast('歌单已删除', 'success');
-                    loadPlaylists();
-                } else {
-                    showToast(result.error || '删除失败', 'error');
-                }
-            } catch (error) {
-                console.error('删除歌单失败:', error);
-                showToast('删除歌单失败', 'error');
-            }
-        }
-
-        // 同步全部歌单
-        async function syncAllPlaylists() {
-            showToast('开始同步所有歌单...', 'info');
-
-            try {
-                const response = await fetchWithAuth('/api/playlists/sync-all', {
-                    method: 'POST'
-                });
-
-                const result = await response.json();
-
-                if (result.success) {
-                    const data = result.data;
-                    showToast(`同步完成! 共发现 ${data.total_new_songs} 首新歌曲，下载 ${data.total_downloaded} 首`, 'success');
-                    loadPlaylists();
-                } else {
-                    showToast(result.error || '同步失败', 'error');
-                }
-            } catch (error) {
-                console.error('同步全部歌单失败:', error);
-                showToast('同步全部歌单失败', 'error');
-            }
-        }
-
-        // 关闭模态框
-        function closeModal(modalId) {
-            document.getElementById(modalId).classList.remove('show');
-        }
-
-        // 当前查看失败歌曲的歌单信息
-        let currentFailedPlaylist = { id: '', name: '' };
-
-        // 显示失败歌曲
-        async function showFailedSongs(playlistId, playlistName) {
-            currentFailedPlaylist = { id: playlistId, name: playlistName };
-            
-            try {
-                const response = await fetchWithAuth(`/api/playlists/${playlistId}/failed-songs`);
-                const result = await response.json();
-
-                if (result.success) {
-                    const failedSongs = result.data;
-                    const modalBody = document.getElementById('failedModalBody');
-                    
-                    if (!failedSongs || failedSongs.length === 0) {
-                        modalBody.innerHTML = `
-                            <div style="text-align: center; padding: 20px;">
-                                <div style="font-size: 3rem; margin-bottom: 16px;">✅</div>
-                                <h3>没有失败的歌曲</h3>
-                            </div>
-                        `;
-                        document.getElementById('failedModalRetryBtn').style.display = 'none';
-                        document.getElementById('failedModalExportBtn').style.display = 'none';
-                    } else {
-                        modalBody.innerHTML = `
-                            <div style="margin-bottom: 16px;">
-                                <strong>歌单:</strong> ${playlistName}
-                                <span style="color: var(--text-secondary); margin-left: 8px;">(${failedSongs.length} 首失败)</span>
-                            </div>
-                            <div style="max-height: 400px; overflow-y: auto;">
-                                <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
-                                    <thead>
-                                        <tr style="background: rgba(0,0,0,0.03); position: sticky; top: 0;">
-                                            <th style="padding: 10px; text-align: left; border-bottom: 1px solid var(--border);">歌曲</th>
-                                            <th style="padding: 10px; text-align: left; border-bottom: 1px solid var(--border);">艺术家</th>
-                                            <th style="padding: 10px; text-align: left; border-bottom: 1px solid var(--border);">失败原因</th>
-                                            <th style="padding: 10px; text-align: center; border-bottom: 1px solid var(--border);">重试</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        ${failedSongs.map(song => `
-                                            <tr style="border-bottom: 1px solid var(--border);">
-                                                <td style="padding: 10px;">
-                                                    <div style="font-weight: 500;">${song.song_name || '未知'}</div>
-                                                    <div style="font-size: 0.75rem; color: var(--text-secondary);">ID: ${song.song_id}</div>
-                                                </td>
-                                                <td style="padding: 10px; color: var(--text-secondary);">${song.artist || '未知'}</td>
-                                                <td style="padding: 10px;">
-                                                    <span style="color: var(--danger); font-size: 0.85rem; background: rgba(255,59,48,0.1); padding: 4px 8px; border-radius: 4px;">
-                                                        ${formatFailReason(song.fail_reason)}
-                                                    </span>
-                                                    ${song.retry_count > 1 ? `<span style="color: var(--text-secondary); font-size: 0.75rem; margin-left: 4px;">(重试${song.retry_count}次)</span>` : ''}
-                                                </td>
-                                                <td style="padding: 10px; text-align: center;">
-                                                    <button class="btn btn-small btn-secondary" onclick="retrySingleSong('${playlistId}', '${song.song_id}')" title="重试下载">🔄</button>
-                                                </td>
-                                            </tr>
-                                        `).join('')}
-                                    </tbody>
-                                </table>
-                            </div>
-                        `;
-                        
-                        document.getElementById('failedModalRetryBtn').style.display = 'inline-flex';
-                        document.getElementById('failedModalRetryBtn').onclick = () => retryAllFailedSongs(playlistId);
-                        
-                        document.getElementById('failedModalExportBtn').style.display = 'inline-flex';
-                        document.getElementById('failedModalExportBtn').onclick = () => exportFailedSongs(failedSongs, playlistName);
-                    }
-                    
-                    document.getElementById('failedModal').classList.add('show');
-                } else {
-                    showToast(result.error || '获取失败歌曲列表失败', 'error');
-                }
-            } catch (error) {
-                console.error('获取失败歌曲失败:', error);
-                showToast('获取失败歌曲列表失败', 'error');
-            }
-        }
-
-        // 格式化失败原因（使其更易读）
-        function formatFailReason(reason) {
-            if (!reason) return '未知错误';
-            
-            // 常见失败原因的友好显示
-            const reasonMap = {
-                '无法获取下载链接，可能需要 VIP 或配置 cookies': 'VIP/版权限制',
-                '无法获取歌曲信息': '歌曲信息获取失败',
-                '下载失败': '网络下载失败',
-            };
-            
-            for (const [key, value] of Object.entries(reasonMap)) {
-                if (reason.includes(key)) return value;
-            }
-            
-            // 截断过长的原因
-            return reason.length > 30 ? reason.substring(0, 30) + '...' : reason;
-        }
-
-        // 重试单首歌曲
-        async function retrySingleSong(playlistId, songId) {
-            showToast('正在重试下载...', 'info');
-            
-            try {
-                // 先清除失败状态
-                await fetchWithAuth(`/api/playlists/${playlistId}/clear-failed`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ song_id: songId })
-                });
-                
-                // 触发同步（会重新下载未下载的歌曲）
-                const response = await fetchWithAuth(`/api/playlists/${playlistId}/sync`, {
-                    method: 'POST'
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    showToast('重试完成', 'success');
-                    // 刷新失败列表
-                    showFailedSongs(playlistId, currentFailedPlaylist.name);
-                    loadPlaylists();
-                } else {
-                    showToast(result.error || '重试失败', 'error');
-                }
-            } catch (error) {
-                console.error('重试下载失败:', error);
-                showToast('重试下载失败', 'error');
-            }
-        }
-
-        // 重试所有失败歌曲
-        async function retryAllFailedSongs(playlistId) {
-            if (!confirm('确定要重试所有失败的歌曲吗？这可能需要一些时间。')) {
-                return;
-            }
-            
-            showToast('正在重试所有失败歌曲...', 'info');
-            
-            try {
-                const response = await fetchWithAuth(`/api/playlists/${playlistId}/retry-failed`, {
-                    method: 'POST'
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    const data = result.data;
-                    showToast(`重试完成: ${data.success}/${data.retried} 首成功`, data.still_failed > 0 ? 'warning' : 'success');
-                    closeModal('failedModal');
-                    loadPlaylists();
-                } else {
-                    showToast(result.error || '重试失败', 'error');
-                }
-            } catch (error) {
-                console.error('重试所有失败歌曲失败:', error);
-                showToast('重试失败', 'error');
-            }
-        }
-
-        // 导出失败歌曲列表
-        function exportFailedSongs(failedSongs, playlistName) {
-            const exportData = {
-                playlist_name: playlistName,
-                export_time: new Date().toLocaleString('zh-CN'),
-                total_failed: failedSongs.length,
-                songs: failedSongs.map(song => ({
-                    song_id: song.song_id,
-                    song_name: song.song_name,
-                    artist: song.artist,
-                    album: song.album,
-                    fail_reason: song.fail_reason,
-                    fail_time: song.fail_time,
-                    retry_count: song.retry_count
-                }))
-            };
-            
-            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `failed_songs_${playlistName}_${new Date().toISOString().split('T')[0]}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            
-            showToast('已导出失败歌曲列表', 'success');
-        }
-
-        // 刷新歌单元数据（不重新下载）
-        async function refreshPlaylistMetadata(playlistId, playlistName) {
-            if (!confirm(`确定要刷新歌单 "${playlistName}" 中已下载歌曲的元数据标签吗？\n\n此操作只更新文件标签，不会重新下载文件。`)) {
-                return;
-            }
-            
-            showToast('正在刷新元数据，请稍候...', 'info');
-            
-            try {
-                const response = await fetchWithAuth(`/api/playlists/${playlistId}/refresh-metadata`, {
-                    method: 'POST'
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    const data = result.data;
-                    showToast(`元数据刷新完成: 更新 ${data.updated_songs} 首，跳过 ${data.skipped_songs} 首，失败 ${data.failed_songs} 首`, 
-                              data.failed_songs > 0 ? 'warning' : 'success');
-                    
-                    // 显示详细结果
-                    if (data.failed_songs > 0 || data.skipped_songs > 0) {
-                        showMetadataRefreshResult(data);
-                    }
-                } else {
-                    showToast(result.error || '刷新元数据失败', 'error');
-                }
-            } catch (error) {
-                console.error('刷新元数据失败:', error);
-                showToast('刷新元数据失败', 'error');
-            }
-        }
-
-        // 显示元数据刷新结果
-        function showMetadataRefreshResult(data) {
-            const modalBody = document.getElementById('checkModalBody');
-            
-            let detailsHtml = '';
-            if (data.details && data.details.length > 0) {
-                const failedItems = data.details.filter(d => d.status === 'failed' || d.status === 'skipped');
-                if (failedItems.length > 0) {
-                    detailsHtml = `
-                        <div style="margin-top: 16px; max-height: 300px; overflow-y: auto;">
-                            <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
-                                <thead>
-                                    <tr style="background: rgba(0,0,0,0.03);">
-                                        <th style="padding: 8px; text-align: left;">歌曲</th>
-                                        <th style="padding: 8px; text-align: left;">状态</th>
-                                        <th style="padding: 8px; text-align: left;">原因</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${failedItems.map(item => `
-                                        <tr style="border-bottom: 1px solid var(--border);">
-                                            <td style="padding: 8px;">${item.song_name || item.song_id || '未知'}</td>
-                                            <td style="padding: 8px;">
-                                                <span style="color: ${item.status === 'failed' ? 'var(--danger)' : 'var(--text-secondary)'};">
-                                                    ${item.status === 'failed' ? '❌ 失败' : '⏭️ 跳过'}
-                                                </span>
-                                            </td>
-                                            <td style="padding: 8px; color: var(--text-secondary); font-size: 0.8rem;">${item.reason || '-'}</td>
-                                        </tr>
-                                    `).join('')}
-                                </tbody>
-                            </table>
-                        </div>
-                    `;
-                }
-            }
-            
-            modalBody.innerHTML = `
-                <div style="text-align: center;">
-                    <h2 style="font-size: 1.2rem; margin-bottom: 16px;">🏷️ 元数据刷新结果</h2>
-                    <p style="color: var(--text-secondary); margin-bottom: 16px;">${data.playlist_name || ''}</p>
-                    <div style="display: flex; justify-content: center; gap: 20px; margin: 20px 0;">
-                        <div style="text-align: center;">
-                            <div style="font-size: 2rem; font-weight: 700; color: var(--accent);">${data.total_songs}</div>
-                            <div style="font-size: 0.85rem; color: var(--text-secondary);">总数</div>
-                        </div>
-                        <div style="text-align: center;">
-                            <div style="font-size: 2rem; font-weight: 700; color: var(--success);">${data.updated_songs}</div>
-                            <div style="font-size: 0.85rem; color: var(--text-secondary);">已更新</div>
-                        </div>
-                        <div style="text-align: center;">
-                            <div style="font-size: 2rem; font-weight: 700; color: var(--text-secondary);">${data.skipped_songs}</div>
-                            <div style="font-size: 0.85rem; color: var(--text-secondary);">跳过</div>
-                        </div>
-                        <div style="text-align: center;">
-                            <div style="font-size: 2rem; font-weight: 700; color: var(--danger);">${data.failed_songs}</div>
-                            <div style="font-size: 0.85rem; color: var(--text-secondary);">失败</div>
-                        </div>
-                    </div>
-                    ${detailsHtml}
-                </div>
-            `;
-            
-            document.getElementById('checkModalSyncBtn').style.display = 'none';
-            document.getElementById('checkModal').classList.add('show');
-        }
-
-        // 页面加载时获取歌单列表
-        document.addEventListener('DOMContentLoaded', loadPlaylists);
-
-        // 回车键添加歌单
-        document.getElementById('playlistInput').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                addPlaylist();
-            }
-        });
-    </script>
+document.addEventListener('DOMContentLoaded', loadPlaylists);
+document.getElementById('playlistInput').addEventListener('keypress', e => { if (e.key==='Enter') addPlaylist(); });
+</script>
 </body>
 </html>

@@ -4,9 +4,11 @@
 配置管理模块 - 统一导出
 """
 
-from .config_manager import ConfigManager
 from .playlist_manager import PlaylistManager
 from .history_manager import HistoryManager
 from .log_manager import LogManager
 
-__all__ = ['ConfigManager', 'PlaylistManager', 'HistoryManager', 'LogManager']
+# 注意：ConfigManager 还在根目录的 config_manager.py 中
+# 为了向后兼容，不在这里导入，避免循环导入
+
+__all__ = ['PlaylistManager', 'HistoryManager', 'LogManager']

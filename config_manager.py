@@ -110,10 +110,29 @@ class ConfigManager:
         # 初始化数据库
         self._init_database()
     
+    def _connect(self):
+        """统一数据库连接：开启 WAL、设置忙等待与同步策略
+
+        - WAL 模式：读写不再互斥，从根上消除大部分 "database is locked"
+        - busy_timeout=30s：遇到锁时自动等待而非立即报错
+        - synchronous=NORMAL：WAL 下安全且更快
+
+        所有业务方法应使用 `with self._connect() as conn:`，
+        不要再直接 sqlite3.connect。
+        """
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA busy_timeout=30000")
+        except sqlite3.Error as e:
+            logger.warning(f"设置数据库 PRAGMA 失败: {e}")
+        return conn
+
     def _init_database(self):
         """初始化数据库表"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 
                 # 创建配置表
@@ -227,7 +246,13 @@ class ConfigManager:
                     self._insert_default_config(cursor)
                     conn.commit()
                     logger.info("✅ 默认配置已插入数据库")
-                    
+
+            # 启动时清理老日志，防止长跑后日志表过大拖垮
+            try:
+                self.cleanup_old_logs()
+            except Exception:
+                pass
+
         except Exception as e:
             logger.error(f"❌ 数据库初始化失败: {e}")
             raise
@@ -311,7 +336,7 @@ class ConfigManager:
     def get_config(self, key: str, default: Any = None) -> Any:
         """获取配置值"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT value, value_type FROM config WHERE key = ?", (key,))
                 row = cursor.fetchone()
@@ -329,7 +354,7 @@ class ConfigManager:
     def set_config(self, key: str, value: Any) -> bool:
         """设置配置值"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 value_type = type(value).__name__
                 
@@ -349,7 +374,7 @@ class ConfigManager:
     def get_all_config(self) -> Dict[str, Any]:
         """获取所有配置"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT key, value FROM config")
                 rows = cursor.fetchall()
@@ -370,10 +395,14 @@ class ConfigManager:
     def update_config_batch(self, config_dict: Dict[str, Any]) -> bool:
         """批量更新配置"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 
                 for key, value in config_dict.items():
+                    # 跳过敏感配置的掩码占位值——前端展示为 ******，
+                    # 未修改时原样提交，不应把掩码写回覆盖真实值
+                    if value == '******':
+                        continue
                     value_type = type(value).__name__
                     cursor.execute("""
                         INSERT INTO config (key, value, value_type) VALUES (?, ?, ?)
@@ -391,7 +420,7 @@ class ConfigManager:
     def reset_to_default(self) -> bool:
         """重置为默认配置"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("DELETE FROM config")
                 self._insert_default_config(cursor)
@@ -408,7 +437,7 @@ class ConfigManager:
                             file_size: int = None, quality: str = None) -> bool:
         """添加下载历史记录"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     INSERT INTO download_history 
@@ -425,7 +454,7 @@ class ConfigManager:
     def get_download_history(self, limit: int = 50, platform: str = None) -> List[Dict[str, Any]]:
         """获取下载历史"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 
                 if platform:
@@ -452,7 +481,7 @@ class ConfigManager:
     def check_download_exists(self, platform: str, content_type: str, content_id: str) -> Optional[Dict[str, Any]]:
         """检查是否已下载过此内容"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT * FROM download_history 
@@ -497,7 +526,7 @@ class ConfigManager:
                                 check_interval: int = 3600) -> bool:
         """添加订阅歌单"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     INSERT INTO subscribed_playlists 
@@ -520,7 +549,7 @@ class ConfigManager:
     def get_playlist_download_dir(self, playlist_id: str, platform: str = 'netease') -> str:
         """获取歌单的下载目录"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT download_dir FROM subscribed_playlists
@@ -546,7 +575,7 @@ class ConfigManager:
             if delete_files:
                 download_dir = self.get_playlist_download_dir(playlist_id, platform)
             
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     DELETE FROM subscribed_playlists 
@@ -589,7 +618,7 @@ class ConfigManager:
     def get_subscribed_playlists(self, platform: str = None, enabled_only: bool = False) -> List[Dict[str, Any]]:
         """获取订阅歌单列表"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 
                 query = "SELECT * FROM subscribed_playlists WHERE 1=1"
@@ -616,7 +645,7 @@ class ConfigManager:
     def get_subscribed_playlist(self, playlist_id: str, platform: str = 'netease') -> Optional[Dict[str, Any]]:
         """获取单个订阅歌单信息"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT * FROM subscribed_playlists 
@@ -650,7 +679,7 @@ class ConfigManager:
             
             values.extend([platform, playlist_id])
             
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute(f"""
                     UPDATE subscribed_playlists 
@@ -668,7 +697,7 @@ class ConfigManager:
                          fail_reason: str = None) -> bool:
         """添加歌单歌曲记录"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 download_time = datetime.now().isoformat() if downloaded else None
                 fail_time = datetime.now().isoformat() if fail_reason else None
@@ -696,7 +725,7 @@ class ConfigManager:
     def get_playlist_songs(self, playlist_id: str, downloaded_only: bool = False) -> List[Dict[str, Any]]:
         """获取歌单中的歌曲记录"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 
                 query = "SELECT * FROM playlist_songs WHERE playlist_id = ?"
@@ -719,7 +748,7 @@ class ConfigManager:
     def get_undownloaded_songs(self, playlist_id: str) -> List[Dict[str, Any]]:
         """获取歌单中未下载的歌曲"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT * FROM playlist_songs 
@@ -738,7 +767,7 @@ class ConfigManager:
     def mark_song_downloaded(self, playlist_id: str, song_id: str) -> bool:
         """标记歌曲已下载"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     UPDATE playlist_songs 
@@ -754,7 +783,7 @@ class ConfigManager:
     def is_song_downloaded(self, playlist_id: str, song_id: str) -> bool:
         """检查歌曲是否已下载"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT downloaded FROM playlist_songs 
@@ -770,7 +799,7 @@ class ConfigManager:
     def mark_song_failed(self, playlist_id: str, song_id: str, fail_reason: str) -> bool:
         """标记歌曲下载失败"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     UPDATE playlist_songs 
@@ -786,7 +815,7 @@ class ConfigManager:
     def remove_playlist_song(self, playlist_id: str, song_id: str) -> bool:
         """从歌单中移除歌曲记录"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     DELETE FROM playlist_songs 
@@ -807,7 +836,7 @@ class ConfigManager:
             False: 可以重试
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT fail_reason, retry_count FROM playlist_songs 
@@ -850,7 +879,7 @@ class ConfigManager:
     def get_failed_songs(self, playlist_id: str) -> List[Dict[str, Any]]:
         """获取歌单中下载失败的歌曲"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
                 cursor.execute("""
@@ -868,7 +897,7 @@ class ConfigManager:
     def clear_song_fail_status(self, playlist_id: str, song_id: str) -> bool:
         """清除歌曲的失败状态（用于重试）"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     UPDATE playlist_songs 
@@ -884,7 +913,7 @@ class ConfigManager:
     def get_all_failed_songs(self) -> List[Dict[str, Any]]:
         """获取所有歌单中下载失败的歌曲"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
                 cursor.execute("""
@@ -904,7 +933,7 @@ class ConfigManager:
     def get_playlist_stats(self, playlist_id: str) -> Dict[str, int]:
         """获取歌单统计信息"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 
                 cursor.execute("""
@@ -935,7 +964,7 @@ class ConfigManager:
                 category: str = 'general', extra_data: Dict = None) -> bool:
         """添加日志记录"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     INSERT INTO app_logs (level, logger_name, message, category, extra_data)
@@ -948,13 +977,36 @@ class ConfigManager:
             # 不用 logger，避免递归
             print(f"添加日志失败: {e}")
             return False
-    
+
+    def cleanup_old_logs(self, keep_days: int = 30, keep_max: int = 100000) -> int:
+        """清理老日志，防止 app_logs 无限增长拖垮长跑。
+
+        - 删除 keep_days 天前的日志
+        - 若剩余仍超过 keep_max，删除最旧的至 keep_max 条
+        """
+        try:
+            with self._connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "DELETE FROM app_logs WHERE timestamp < datetime('now', ?)",
+                    (f'-{keep_days} days',)
+                )
+                cur.execute(
+                    "DELETE FROM app_logs WHERE id NOT IN "
+                    "(SELECT id FROM app_logs ORDER BY id DESC LIMIT ?)",
+                    (keep_max,)
+                )
+                conn.commit()
+                return cur.rowcount
+        except Exception:
+            return 0
+
     def get_logs(self, limit: int = 100, offset: int = 0, level: str = None,
                  category: str = None, search: str = None, 
                  start_time: str = None, end_time: str = None) -> List[Dict]:
         """获取日志列表"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
                 
@@ -997,7 +1049,7 @@ class ConfigManager:
                       end_time: str = None) -> int:
         """获取日志数量"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 
                 query = "SELECT COUNT(*) FROM app_logs WHERE 1=1"
@@ -1032,7 +1084,7 @@ class ConfigManager:
     def get_log_categories(self) -> List[str]:
         """获取所有日志类别"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT DISTINCT category FROM app_logs ORDER BY category")
                 return [row[0] for row in cursor.fetchall() if row[0]]
@@ -1043,7 +1095,7 @@ class ConfigManager:
     def clear_logs(self, before_date: str = None, category: str = None) -> int:
         """清理日志"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 
                 query = "DELETE FROM app_logs WHERE 1=1"

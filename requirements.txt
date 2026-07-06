@@ -37,7 +37,9 @@ aiofiles>=0.8.0
 PySocks==1.7.1
 
 # Apple Music (可选，需要 gamdl)
-gamdl>=2.4.0
+# gamdl 默认注释：它是可选依赖，但写死会导致装不上时整个 pip install 失败。
+# 如需 Apple Music 下载功能，手动安装：pip install gamdl>=2.4.0
+# gamdl>=2.4.0
 
 # 歌词支持
 chardet>=5.0.0

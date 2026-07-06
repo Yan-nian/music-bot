@@ -27,7 +27,7 @@ app = Flask(__name__,
            static_folder='static')
 
 # 设置 session 密钥（从环境变量读取或使用固定值，避免每次重启生成新密钥导致 session 失效）
-app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'music-bot-default-secret-key-change-in-production')
+app.secret_key = os.environ.get('FLASK_SECRET_KEY') or secrets.token_hex(32)
 
 # 配置管理器实例
 config_manager: ConfigManager = None
@@ -37,9 +37,48 @@ DEFAULT_USERNAME = 'admin'
 DEFAULT_PASSWORD = 'admin'
 
 
+# 需要掩码的敏感配置项（不再明文返回前端）
+SENSITIVE_KEYS = {
+    'telegram_bot_token', 'netease_cookies', 'apple_music_session_string',
+    'youtube_music_cookies', 'qbittorrent_password', 'flask_secret_key',
+    'password_salt', 'admin_password',
+}
+
+
+def _get_password_salt() -> str:
+    """获取密码盐（首次生成并持久化到配置）"""
+    salt = config_manager.get_config('password_salt') if config_manager else ''
+    if not salt:
+        salt = secrets.token_hex(16)
+        if config_manager:
+            config_manager.set_config('password_salt', salt)
+    return salt
+
+
 def hash_password(password: str) -> str:
-    """哈希密码"""
-    return hashlib.sha256(password.encode()).hexdigest()
+    """加盐哈希密码（新格式以 salted: 前缀标识）"""
+    salt = _get_password_salt()
+    return 'salted:' + hashlib.sha256((salt + password).encode()).hexdigest()
+
+
+def verify_password(password: str, stored: str) -> bool:
+    """验证密码，兼容旧的无盐 sha256 格式"""
+    if not stored:
+        return False
+    if stored.startswith('salted:'):
+        salt = _get_password_salt()
+        return 'salted:' + hashlib.sha256((salt + password).encode()).hexdigest() == stored
+    # 旧格式兼容（无盐 sha256）
+    return hashlib.sha256(password.encode()).hexdigest() == stored
+
+
+def mask_sensitive(config: dict) -> dict:
+    """对敏感配置项掩码，避免明文返回前端"""
+    masked = dict(config)
+    for key in SENSITIVE_KEYS:
+        if key in masked and masked[key]:
+            masked[key] = '******'
+    return masked
 
 
 def login_required(f):
@@ -60,7 +99,15 @@ def init_app(db_path: str = None):
     """初始化应用"""
     global config_manager
     config_manager = get_config_manager(db_path)
-    
+
+    # secret_key 动态化：优先环境变量，其次持久化配置，最后随机生成并持久化
+    # 避免 session 被伪造，也避免重启后所有用户被登出
+    secret = os.environ.get('FLASK_SECRET_KEY') or config_manager.get_config('flask_secret_key')
+    if not secret:
+        secret = secrets.token_hex(32)
+        config_manager.set_config('flask_secret_key', secret)
+    app.secret_key = secret
+
     # 初始化默认管理员账号（如果不存在）
     if not config_manager.get_config('admin_username'):
         config_manager.set_config('admin_username', DEFAULT_USERNAME)
@@ -108,7 +155,10 @@ def api_login():
         stored_username = config_manager.get_config('admin_username') or DEFAULT_USERNAME
         stored_password = config_manager.get_config('admin_password') or hash_password(DEFAULT_PASSWORD)
         
-        if username == stored_username and hash_password(password) == stored_password:
+        if username == stored_username and verify_password(password, stored_password):
+            # 旧无盐密码自动升级为加盐格式
+            if not stored_password.startswith('salted:'):
+                config_manager.set_config('admin_password', hash_password(password))
             session['logged_in'] = True
             session['username'] = username
             session.permanent = remember
@@ -179,9 +229,9 @@ def api_change_password():
         
         # 验证当前密码
         stored_password = config_manager.get_config('admin_password') or hash_password(DEFAULT_PASSWORD)
-        if hash_password(current_password) != stored_password:
+        if not verify_password(current_password, stored_password):
             return jsonify({'success': False, 'error': '当前密码错误'}), 401
-        
+
         # 更新密码
         config_manager.set_config('admin_password', hash_password(new_password))
         logger.info(f"用户 {session.get('username')} 修改了密码")
@@ -216,7 +266,7 @@ def api_change_username():
         
         # 验证密码
         stored_password = config_manager.get_config('admin_password') or hash_password(DEFAULT_PASSWORD)
-        if hash_password(password) != stored_password:
+        if not verify_password(password, stored_password):
             return jsonify({'success': False, 'error': '密码错误'}), 401
         
         # 更新用户名
@@ -244,10 +294,9 @@ def get_all_config():
     """获取所有配置"""
     try:
         config = config_manager.get_all_config()
-        # 明文显示所有配置
         return jsonify({
             'success': True,
-            'data': config
+            'data': mask_sensitive(config)
         })
     except Exception as e:
         logger.error(f"获取配置失败: {e}")
@@ -279,6 +328,8 @@ def get_config_item(key: str):
     """获取单个配置项"""
     try:
         value = config_manager.get_config(key)
+        if key in SENSITIVE_KEYS and value:
+            value = '******'
         return jsonify({
             'success': True,
             'data': {key: value}
@@ -1093,15 +1144,15 @@ def index():
 @app.route('/settings')
 @login_required
 def settings():
-    """设置页面"""
-    return render_template('settings.html')
+    """设置页面（配置已整合在主页，重定向避免模板缺失 500）"""
+    return redirect(url_for('index'))
 
 
 @app.route('/history')
 @login_required
 def history():
-    """下载历史页面"""
-    return render_template('history.html')
+    """下载历史（暂未独立页面，回到主页）"""
+    return redirect(url_for('index'))
 
 
 @app.route('/setup')

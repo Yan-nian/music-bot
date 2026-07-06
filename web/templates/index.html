@@ -422,6 +422,21 @@
                 grid-template-columns: 1fr;
             }
         }
+        .nav-save-btn {
+            margin-left: auto;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 10px;
+            background: var(--accent);
+            color: #fff;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+        .nav-save-btn:hover { background: var(--accent-hover); transform: scale(1.03); }
+
     </style>
 </head>
 <body>
@@ -477,6 +492,7 @@
             <button class="nav-tab" data-section="apple">🍎 Apple Music</button>
             <button class="nav-tab" data-section="youtube">▶️ YouTube Music</button>
             <button class="nav-tab" data-section="general">⚙️ 通用设置</button>
+            <button class="nav-save-btn" onclick="saveCurrentSection()" title="保存当前页配置">💾 保存当前页</button>
         </div>
 
         <!-- Telegram 配置 -->
@@ -857,6 +873,16 @@
             general: ['download_path', 'send_to_telegram', 'proxy_enabled', 'proxy_host', 'log_level', 'log_to_file', 'log_to_console']
         };
 
+        // 敏感字段：后端以 ****** 掩码返回，前端不回填、留空不提交（保持原值）
+        const SENSITIVE_FIELDS = ['telegram_bot_token', 'telegram_session_string', 'netease_cookies', 'apple_music_cookies', 'youtube_music_cookies'];
+
+        // 保存当前激活的配置页
+        function saveCurrentSection() {
+            const activeTab = document.querySelector('.nav-tab.active');
+            if (!activeTab) { showToast('未找到当前页', 'error'); return; }
+            saveConfig(activeTab.dataset.section);
+        }
+
         // 显示 Toast 通知
         function showToast(message, type = 'info') {
             const toast = document.getElementById('toast');
@@ -904,8 +930,13 @@
                         if (element) {
                             if (element.type === 'checkbox') {
                                 element.checked = config[key];
+                            } else if (SENSITIVE_FIELDS.includes(key)) {
+                                // 敏感字段：后端以 ****** 返回，不回填进输入框，
+                                // 仅提示是否已配置，留空表示不修改
+                                element.value = '';
+                                element.placeholder = config[key] ? '已配置（留空保持不变，重新输入以修改）' : (element.placeholder || '');
                             } else {
-                                element.value = config[key];
+                                element.value = config[key] || '';
                             }
                         }
                     });
@@ -953,6 +984,10 @@
                     if (element.type === 'checkbox') {
                         data[key] = element.checked;
                     } else {
+                        // 敏感字段留空则不提交，避免空串误覆盖原值
+                        if (SENSITIVE_FIELDS.includes(key) && !element.value.trim()) {
+                            return;
+                        }
                         data[key] = element.value;
                     }
                 }

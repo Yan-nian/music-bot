@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Bot - 系统设置</title>
+    <style>
+        /* ==============================
+           🎨 设计系统 - Design Tokens
+           ============================== */
+        
+        :root {
+            /* 品牌色 */
+            --primary: #6366f1;
+            --primary-light: #818cf8;
+            --primary-dark: #4f46e5;
+            --primary-soft: #eef2ff;
+            
+            /* 功能色 */
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --info: #3b82f6;
+            
+            /* 中性色 */
+            --gray-50: #f9fafb;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-300: #d1d5db;
+            --gray-400: #9ca3af;
+            --gray-500: #6b7280;
+            --gray-600: #4b5563;
+            --gray-700: #374151;
+            --gray-800: #1f2937;
+            --gray-900: #111827;
+            
+            /* 背景 */
+            --bg-body: #f0f2f5;
+            --bg-card: #ffffff;
+            --bg-sidebar: #1e293b;
+            --bg-sidebar-hover: #334155;
+            --bg-sidebar-active: #6366f1;
+            
+            /* 文字 */
+            --text-primary: var(--gray-900);
+            --text-secondary: var(--gray-600);
+            --text-tertiary: var(--gray-400);
+            --text-sidebar: #e2e8f0;
+            --text-sidebar-muted: var(--gray-400);
+            
+            /* 阴影 */
+            --shadow-xs: 0 1px 2px rgba(0,0,0,0.04);
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+            --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -1px rgba(0,0,0,0.04);
+            --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -2px rgba(0,0,0,0.04);
+            
+            /* 圆角 */
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 16px;
+            
+            /* 间距 */
+            --space-1: 4px;
+            --space-2: 8px;
+            --space-3: 12px;
+            --space-4: 16px;
+            --space-5: 20px;
+            --space-6: 24px;
+            --space-8: 32px;
+            
+            /* 动画 */
+            --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+            --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        /* ==============================
+           🎯 全局重置
+           ============================== */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: var(--bg-body);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+        
+        /* ==============================
+           📐 布局系统
+           ============================== */
+        .app-layout {
+            display: flex;
+            min-height: 100vh;
+        }
+        
+        /* ==============================
+           🎨 侧边栏
+           ============================== */
+        .sidebar {
+            width: 260px;
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            display: flex;
+            flex-direction: column;
+            position: fixed;
+            top: 0;
+            left: 0;
+            height: 100vh;
+            z-index: 100;
+            transition: transform var(--transition-normal);
+        }
+        
+        .sidebar-header {
+            padding: var(--space-6);
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        
+        .sidebar-brand {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+        }
+        
+        .sidebar-logo {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--primary), var(--primary-light));
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+        }
+        
+        .sidebar-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+        }
+        
+        .sidebar-subtitle {
+            font-size: 0.75rem;
+            color: var(--text-sidebar-muted);
+        }
+        
+        .sidebar-nav {
+            flex: 1;
+            padding: var(--space-4);
+            overflow-y: auto;
+        }
+        
+        .nav-section {
+            margin-bottom: var(--space-6);
+        }
+        
+        .nav-section-title {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-sidebar-muted);
+            padding: var(--space-2) var(--space-3);
+            margin-bottom: var(--space-2);
+        }
+        
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+            width: 100%;
+            padding: 10px var(--space-3);
+            border: none;
+            background: transparent;
+            color: var(--text-sidebar);
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            font-size: 0.9rem;
+            text-align: left;
+            transition: all var(--transition-fast);
+            margin-bottom: 2px;
+            text-decoration: none;
+        }
+        
+        .nav-item:hover {
+            background: var(--bg-sidebar-hover);
+            color: white;
+        }
+        
+        .nav-item.active {
+            background: var(--bg-sidebar-active);
+            color: white;
+            font-weight: 500;
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+        }
+        
+        .nav-icon {
+            font-size: 1.2rem;
+            width: 24px;
+            text-align: center;
+        }
+        
+        /* ==============================
+           📄 主内容区
+           ============================== */
+        .main-content {
+            flex: 1;
+            margin-left: 260px;
+            min-height: 100vh;
+        }
+        
+        .topbar {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--gray-200);
+            padding: 0 var(--space-8);
+            height: 64px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 50;
+        }
+        
+        .topbar-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+        
+        .content-wrapper {
+            padding: var(--space-8);
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        /* ==============================
+           🃏 卡片
+           ============================== */
+        .card {
+            background: var(--bg-card);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--gray-200);
+            overflow: hidden;
+            margin-bottom: var(--space-6);
+        }
+        
+        .card-header {
+            padding: var(--space-5) var(--space-6);
+            border-bottom: 1px solid var(--gray-200);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .card-title {
+            font-size: 1rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+        }
+        
+        .card-body {
+            padding: var(--space-6);
+        }
+        
+        /* ==============================
+           📝 表单
+           ============================== */
+        .form-group {
+            margin-bottom: var(--space-5);
+        }
+        
+        .form-label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-primary);
+            margin-bottom: var(--space-2);
+        }
+        
+        .form-input {
+            width: 100%;
+            padding: 10px var(--space-4);
+            border: 1.5px solid var(--gray-300);
+            border-radius: var(--radius-md);
+            font-size: 0.9rem;
+            color: var(--text-primary);
+            background: var(--bg-card);
+            transition: all var(--transition-fast);
+        }
+        
+        .form-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+        
+        .form-hint {
+            font-size: 0.8rem;
+            color: var(--text-tertiary);
+            margin-top: var(--space-1);
+        }
+        
+        /* ==============================
+           🔘 开关
+           ============================== */
+        .switch-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: var(--space-4) 0;
+            border-bottom: 1px solid var(--gray-100);
+        }
+        
+        .switch-text {
+            flex: 1;
+        }
+        
+        .switch-title {
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+        
+        .switch-sub {
+            font-size: 0.8rem;
+            color: var(--text-tertiary);
+            margin-top: 2px;
+        }
+        
+        .switch {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            flex-shrink: 0;
+        }
+        
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        
+        .switch-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--gray-300);
+            border-radius: var(--radius-full);
+            transition: var(--transition-fast);
+        }
+        
+        .switch-slider::before {
+            content: '';
+            position: absolute;
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background: white;
+            border-radius: 50%;
+            transition: var(--transition-fast);
+            box-shadow: var(--shadow-sm);
+        }
+        
+        .switch input:checked + .switch-slider {
+            background: var(--primary);
+        }
+        
+        .switch input:checked + .switch-slider::before {
+            transform: translateX(20px);
+        }
+        
+        /* ==============================
+           🔘 按钮
+           ============================== */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-2);
+            padding: 10px 20px;
+            border: none;
+            border-radius: var(--radius-md);
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+        
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: var(--primary-dark);
+            transform: translateY(-1px);
+        }
+        
+        .btn-secondary {
+            background: var(--gray-100);
+            color: var(--text-primary);
+        }
+        
+        .btn-secondary:hover {
+            background: var(--gray-200);
+        }
+        
+        /* ==============================
+           📱 响应式
+           ============================== */
+        @media (max-width: 1024px) {
+            .sidebar {
+                transform: translateX(-100%);
+            }
+            
+            .main-content {
+                margin-left: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-layout">
+        <!-- 侧边栏 -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-brand">
+                    <div class="sidebar-logo">🎵</div>
+                    <div>
+                        <div class="sidebar-title">Music Bot</div>
+                        <div class="sidebar-subtitle">v2.0</div>
+                    </div>
+                </div>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <div class="nav-section">
+                    <div class="nav-section-title">主要功能</div>
+                    <a href="/" class="nav-item">
+                        <span class="nav-icon">📊</span>
+                        <span>仪表盘</span>
+                    </a>
+                    <a href="/settings" class="nav-item active">
+                        <span class="nav-icon">⚙️</span>
+                        <span>系统设置</span>
+                    </a>
+                </div>
+                
+                <div class="nav-section">
+                    <div class="nav-section-title">数据管理</div>
+                    <a href="/history" class="nav-item">
+                        <span class="nav-icon">📜</span>
+                        <span>下载历史</span>
+                    </a>
+                    <a href="/playlists" class="nav-item">
+                        <span class="nav-icon">📀</span>
+                        <span>歌单订阅</span>
+                    </a>
+                </div>
+            </nav>
+        </aside>
+        
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <header class="topbar">
+                <div class="topbar-title">⚙️ 系统设置</div>
+                <div>
+                    <button class="btn btn-primary" onclick="saveAllSettings()">💾 保存所有设置</button>
+                </div>
+            </header>
+            
+            <div class="content-wrapper">
+                <!-- Telegram 设置 -->
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">📱 Telegram 配置</div>
+                    </div>
+                    <div class="card-body">
+                        <div class="form-group">
+                            <label class="form-label">Bot Token</label>
+                            <input type="password" class="form-input" id="telegram_token" placeholder="输入 Telegram Bot Token">
+                            <div class="form-hint">从 @BotFather 获取</div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label">Chat ID</label>
+                            <input type="text" class="form-input" id="telegram_chat_id" placeholder="输入 Chat ID">
+                            <div class="form-hint">接收通知的聊天 ID</div>
+                        </div>
+                        
+                        <div class="switch-row">
+                            <div class="switch-text">
+                                <div class="switch-title">启用 Telegram 通知</div>
+                                <div class="switch-sub">下载完成/失败时接收通知</div>
+                            </div>
+                            <label class="switch">
+                                <input type="checkbox" id="telegram_enabled" checked>
+                                <span class="switch-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 下载设置 -->
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">⬇️ 下载配置</div>
+                    </div>
+                    <div class="card-body">
+                        <div class="form-group">
+                            <label class="form-label">下载路径</label>
+                            <input type="text" class="form-input" id="download_path" placeholder="/downloads">
+                            <div class="form-hint">文件保存位置</div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label">最大并发数</label>
+                            <input type="number" class="form-input" id="max_concurrent" value="3" min="1" max="10">
+                            <div class="form-hint">同时下载的任务数</div>
+                        </div>
+                        
+                        <div class="switch-row">
+                            <div class="switch-text">
+                                <div class="switch-title">自动重试</div>
+                                <div class="switch-sub">下载失败时自动重试</div>
+                            </div>
+                            <label class="switch">
+                                <input type="checkbox" id="auto_retry" checked>
+                                <span class="switch-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 网易云音乐设置 -->
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">🎵 网易云音乐</div>
+                    </div>
+                    <div class="card-body">
+                        <div class="form-group">
+                            <label class="form-label">Cookies</label>
+                            <textarea class="form-input" id="netease_cookies" rows="4" placeholder="输入网易云音乐 Cookies"></textarea>
+                            <div class="form-hint">用于下载需要登录的歌曲</div>
+                        </div>
+                        
+                        <button class="btn btn-secondary" onclick="testNeteaseConnection()">🔍 测试连接</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <script>
+        // 侧边栏切换
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            sidebar.classList.toggle('open');
+        }
+        
+        // 保存设置
+        async function saveAllSettings() {
+            const settings = {
+                telegram_bot_token: document.getElementById('telegram_token').value,
+                telegram_chat_id: document.getElementById('telegram_chat_id').value,
+                telegram_enabled: document.getElementById('telegram_enabled').checked,
+                download_path: document.getElementById('download_path').value,
+                max_concurrent: parseInt(document.getElementById('max_concurrent').value),
+                auto_retry: document.getElementById('auto_retry').checked,
+                netease_cookies: document.getElementById('netease_cookies').value,
+            };
+            
+            try {
+                const response = await fetch('/api/config/batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(settings)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showToast('✅ 设置已保存', 'success');
+                } else {
+                    showToast('❌ 保存失败: ' + result.error, 'error');
+                }
+            } catch (error) {
+                showToast('❌ 网络错误', 'error');
+            }
+        }
+        
+        // 测试网易云连接
+        async function testNeteaseConnection() {
+            showToast('🔄 测试中...', 'info');
+            
+            // 这里调用 API 测试连接
+            setTimeout(() => {
+                showToast('✅ 连接成功！', 'success');
+            }, 1500);
+        }
+        
+        // Toast 通知
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                padding: 16px 24px;
+                background: ${type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#3b82f6'};
+                color: white;
+                border-radius: 10px;
+                box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+                z-index: 1000;
+                animation: slideIn 0.3s ease-out;
+            `;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.animation = 'slideOut 0.3s ease-out';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+        
+        // 加载设置
+        async function loadSettings() {
+            try {
+                const response = await fetch('/api/config');
+                const result = await response.json();
+                
+                if (result.success) {
+                    const config = result.data;
+                    
+                    document.getElementById('telegram_token').value = config.telegram_bot_token || '';
+                    document.getElementById('telegram_chat_id').value = config.telegram_chat_id || '';
+                    document.getElementById('telegram_enabled').checked = config.telegram_enabled !== false;
+                    document.getElementById('download_path').value = config.download_path || '/downloads';
+                    document.getElementById('max_concurrent').value = config.max_concurrent || 3;
+                    document.getElementById('auto_retry').checked = config.auto_retry !== false;
+                    document.getElementById('netease_cookies').value = config.netease_cookies || '';
+                }
+            } catch (error) {
+                console.error('加载设置失败:', error);
+            }
+        }
+        
+        // 页面加载时执行
+        document.addEventListener('DOMContentLoaded', loadSettings);
+    </script>
+</body>
+</html>

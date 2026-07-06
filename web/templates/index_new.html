@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Bot - 管理中心</title>
+    <style>
+        /* ==============================
+           🎨 设计系统 - Design Tokens
+           ============================== */
+        
+        :root {
+            /* 品牌色 */
+            --primary: #6366f1;        /* Indigo - 主品牌色 */
+            --primary-light: #818cf8;   /* 浅色 */
+            --primary-dark: #4f46e5;    /* 深色 */
+            --primary-soft: #eef2ff;     /* 柔和背景 */
+            
+            /* 功能色 */
+            --success: #10b981;          /* 绿色 - 成功 */
+            --warning: #f59e0b;          /* 橙色 - 警告 */
+            --danger: #ef4444;           /* 红色 - 危险 */
+            --info: #3b82f6;            /* 蓝色 - 信息 */
+            
+            /* 中性色 */
+            --gray-50: #f9fafb;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-300: #d1d5db;
+            --gray-400: #9ca3af;
+            --gray-500: #6b7280;
+            --gray-600: #4b5563;
+            --gray-700: #374151;
+            --gray-800: #1f2937;
+            --gray-900: #111827;
+            
+            /* 背景 */
+            --bg-body: #f0f2f5;
+            --bg-card: #ffffff;
+            --bg-sidebar: #1e293b;      /* 深色侧边栏 */
+            --bg-sidebar-hover: #334155;
+            --bg-sidebar-active: #6366f1;
+            
+            /* 文字 */
+            --text-primary: var(--gray-900);
+            --text-secondary: var(--gray-600);
+            --text-tertiary: var(--gray-400);
+            --text-sidebar: #e2e8f0;
+            --text-sidebar-muted: var(--gray-400);
+            
+            /* 阴影 */
+            --shadow-xs: 0 1px 2px rgba(0,0,0,0.04);
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+            --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -1px rgba(0,0,0,0.04);
+            --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -2px rgba(0,0,0,0.04);
+            --shadow-xl: 0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.03);
+            
+            /* 圆角 */
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 16px;
+            --radius-xl: 24px;
+            --radius-full: 9999px;
+            
+            /* 间距 */
+            --space-1: 4px;
+            --space-2: 8px;
+            --space-3: 12px;
+            --space-4: 16px;
+            --space-5: 20px;
+            --space-6: 24px;
+            --space-8: 32px;
+            --space-10: 40px;
+            --space-12: 48px;
+            
+            /* 动画 */
+            --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+            --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+            --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        /* ==============================
+           🎯 全局重置
+           ============================== */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: var(--bg-body);
+            color: var(--text-primary);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        
+        /* ==============================
+           📐 布局系统
+           ============================== */
+        .app-layout {
+            display: flex;
+            min-height: 100vh;
+        }
+        
+        /* ==============================
+           🎨 侧边栏设计
+           ============================== */
+        .sidebar {
+            width: 260px;
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            display: flex;
+            flex-direction: column;
+            position: fixed;
+            top: 0;
+            left: 0;
+            height: 100vh;
+            z-index: 100;
+            transition: transform var(--transition-normal);
+            box-shadow: var(--shadow-lg);
+        }
+        
+        .sidebar-header {
+            padding: var(--space-6);
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        
+        .sidebar-brand {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+        }
+        
+        .sidebar-logo {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--primary), var(--primary-light));
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+        }
+        
+        .sidebar-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+        
+        .sidebar-subtitle {
+            font-size: 0.75rem;
+            color: var(--text-sidebar-muted);
+            margin-top: 2px;
+        }
+        
+        /* 导航菜单 */
+        .sidebar-nav {
+            flex: 1;
+            padding: var(--space-4);
+            overflow-y: auto;
+        }
+        
+        .nav-section {
+            margin-bottom: var(--space-6);
+        }
+        
+        .nav-section-title {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-sidebar-muted);
+            padding: var(--space-2) var(--space-3);
+            margin-bottom: var(--space-2);
+        }
+        
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+            width: 100%;
+            padding: 10px var(--space-3);
+            border: none;
+            background: transparent;
+            color: var(--text-sidebar);
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            font-size: 0.9rem;
+            text-align: left;
+            transition: all var(--transition-fast);
+            margin-bottom: 2px;
+            text-decoration: none;
+        }
+        
+        .nav-item:hover {
+            background: var(--bg-sidebar-hover);
+            color: white;
+        }
+        
+        .nav-item.active {
+            background: var(--bg-sidebar-active);
+            color: white;
+            font-weight: 500;
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+        }
+        
+        .nav-icon {
+            font-size: 1.2rem;
+            width: 24px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+        
+        .nav-badge {
+            margin-left: auto;
+            background: var(--danger);
+            color: white;
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: var(--radius-full);
+            min-width: 20px;
+            text-align: center;
+        }
+        
+        /* 侧边栏底部 */
+        .sidebar-footer {
+            padding: var(--space-4);
+            border-top: 1px solid rgba(255,255,255,0.08);
+        }
+        
+        .sidebar-user {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+            padding: var(--space-3);
+            border-radius: var(--radius-md);
+            transition: background var(--transition-fast);
+        }
+        
+        .sidebar-user:hover {
+            background: var(--bg-sidebar-hover);
+        }
+        
+        .user-avatar {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, var(--primary), var(--primary-light));
+            border-radius: var(--radius-full);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: white;
+        }
+        
+        .user-info {
+            flex: 1;
+        }
+        
+        .user-name {
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+        
+        .user-role {
+            font-size: 0.7rem;
+            color: var(--text-sidebar-muted);
+        }
+        
+        /* ==============================
+           📄 主内容区
+           ============================== */
+        .main-content {
+            flex: 1;
+            margin-left: 260px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* 顶部导航栏 */
+        .topbar {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--gray-200);
+            padding: 0 var(--space-8);
+            height: 64px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            box-shadow: var(--shadow-xs);
+        }
+        
+        .topbar-left {
+            display: flex;
+            align-items: center;
+            gap: var(--space-4);
+        }
+        
+        .topbar-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .topbar-breadcrumb {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+            font-size: 0.85rem;
+            color: var(--text-tertiary);
+        }
+        
+        .topbar-right {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+        }
+        
+        /* 按钮 */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-2);
+            padding: 8px 16px;
+            border: none;
+            border-radius: var(--radius-md);
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+            box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+        }
+        
+        .btn-primary:hover {
+            background: var(--primary-dark);
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+            transform: translateY(-1px);
+        }
+        
+        .btn-secondary {
+            background: var(--gray-100);
+            color: var(--text-primary);
+        }
+        
+        .btn-secondary:hover {
+            background: var(--gray-200);
+        }
+        
+        .btn-ghost {
+            background: transparent;
+            color: var(--text-secondary);
+        }
+        
+        .btn-ghost:hover {
+            background: var(--gray-100);
+            color: var(--text-primary);
+        }
+        
+        .btn-icon {
+            width: 36px;
+            height: 36px;
+            padding: 0;
+            border-radius: var(--radius-md);
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            transition: all var(--transition-fast);
+        }
+        
+        .btn-icon:hover {
+            background: var(--gray-100);
+        }
+        
+        /* ==============================
+           🃏 卡片系统
+           ============================== */
+        .content-wrapper {
+            flex: 1;
+            padding: var(--space-8);
+            max-width: 1400px;
+            width: 100%;
+            margin: 0 auto;
+        }
+        
+        .card {
+            background: var(--bg-card);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--gray-200);
+            overflow: hidden;
+            transition: all var(--transition-normal);
+        }
+        
+        .card:hover {
+            box-shadow: var(--shadow-md);
+        }
+        
+        .card-header {
+            padding: var(--space-5) var(--space-6);
+            border-bottom: 1px solid var(--gray-200);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .card-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+        }
+        
+        .card-body {
+            padding: var(--space-6);
+        }
+        
+        /* ==============================
+           📊 统计卡片
+           ============================== */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: var(--space-5);
+            margin-bottom: var(--space-8);
+        }
+        
+        .stat-card {
+            background: var(--bg-card);
+            border-radius: var(--radius-lg);
+            padding: var(--space-6);
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--gray-200);
+            transition: all var(--transition-normal);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+            background: var(--primary);
+            opacity: 0;
+            transition: opacity var(--transition-fast);
+        }
+        
+        .stat-card:hover::before {
+            opacity: 1;
+        }
+        
+        .stat-card:hover {
+            box-shadow: var(--shadow-md);
+            transform: translateY(-2px);
+        }
+        
+        .stat-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            margin-bottom: var(--space-4);
+        }
+        
+        .stat-icon.blue { background: #dbeafe; }
+        .stat-icon.green { background: #d1fae5; }
+        .stat-icon.orange { background: #fed7aa; }
+        .stat-icon.purple { background: #ede9fe; }
+        
+        .stat-value {
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            line-height: 1.2;
+        }
+        
+        .stat-label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-top: var(--space-1);
+        }
+        
+        .stat-trend {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            margin-top: var(--space-2);
+            padding: 2px 8px;
+            border-radius: var(--radius-full);
+        }
+        
+        .stat-trend.up {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        
+        .stat-trend.down {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        
+        /* ==============================
+           📝 表单元素
+           ============================== */
+        .form-group {
+            margin-bottom: var(--space-5);
+        }
+        
+        .form-label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-primary);
+            margin-bottom: var(--space-2);
+        }
+        
+        .form-input {
+            width: 100%;
+            padding: 10px var(--space-4);
+            border: 1.5px solid var(--gray-300);
+            border-radius: var(--radius-md);
+            font-size: 0.9rem;
+            color: var(--text-primary);
+            background: var(--bg-card);
+            transition: all var(--transition-fast);
+        }
+        
+        .form-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+        
+        .form-hint {
+            font-size: 0.8rem;
+            color: var(--text-tertiary);
+            margin-top: var(--space-1);
+        }
+        
+        /* ==============================
+           🔘 开关按钮
+           ============================== */
+        .switch-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: var(--space-4) 0;
+        }
+        
+        .switch-text {
+            flex: 1;
+        }
+        
+        .switch-title {
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+        
+        .switch-sub {
+            font-size: 0.8rem;
+            color: var(--text-tertiary);
+            margin-top: 2px;
+        }
+        
+        .switch {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            flex-shrink: 0;
+        }
+        
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        
+        .switch-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--gray-300);
+            border-radius: var(--radius-full);
+            transition: var(--transition-fast);
+        }
+        
+        .switch-slider::before {
+            content: '';
+            position: absolute;
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background: white;
+            border-radius: 50%;
+            transition: var(--transition-fast);
+            box-shadow: var(--shadow-sm);
+        }
+        
+        .switch input:checked + .switch-slider {
+            background: var(--primary);
+        }
+        
+        .switch input:checked + .switch-slider::before {
+            transform: translateX(20px);
+        }
+        
+        /* ==============================
+           📱 响应式设计
+           ============================== */
+        @media (max-width: 1024px) {
+            .sidebar {
+                transform: translateX(-100%);
+            }
+            
+            .sidebar.open {
+                transform: translateX(0);
+            }
+            
+            .main-content {
+                margin-left: 0;
+            }
+            
+            .menu-toggle {
+                display: flex;
+            }
+        }
+        
+        @media (max-width: 640px) {
+            .content-wrapper {
+                padding: var(--space-4);
+            }
+            
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        /* ==============================
+           ✨ 动画
+           ============================== */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .fade-in {
+            animation: fadeIn var(--transition-normal) ease-out;
+        }
+        
+        /* 加载状态 */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: var(--space-12);
+            color: var(--text-tertiary);
+        }
+        
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid var(--gray-200);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <!-- 应用布局 -->
+    <div class="app-layout">
+        <!-- 侧边栏 -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-brand">
+                    <div class="sidebar-logo">🎵</div>
+                    <div>
+                        <div class="sidebar-title">Music Bot</div>
+                        <div class="sidebar-subtitle">v2.0 - 管理中心</div>
+                    </div>
+                </div>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <div class="nav-section">
+                    <div class="nav-section-title">主要功能</div>
+                    <a href="#" class="nav-item active">
+                        <span class="nav-icon">📊</span>
+                        <span>仪表盘</span>
+                    </a>
+                    <a href="#" class="nav-item">
+                        <span class="nav-icon">⚙️</span>
+                        <span>系统设置</span>
+                    </a>
+                    <a href="#" class="nav-item">
+                        <span class="nav-icon">🎶</span>
+                        <span>下载任务</span>
+                        <span class="nav-badge">3</span>
+                    </a>
+                </div>
+                
+                <div class="nav-section">
+                    <div class="nav-section-title">数据管理</div>
+                    <a href="#" class="nav-item">
+                        <span class="nav-icon">📜</span>
+                        <span>下载历史</span>
+                    </a>
+                    <a href="#" class="nav-item">
+                        <span class="nav-icon">📀</span>
+                        <span>歌单订阅</span>
+                    </a>
+                </div>
+                
+                <div class="nav-section">
+                    <div class="nav-section-title">系统</div>
+                    <a href="#" class="nav-item">
+                        <span class="nav-icon">📝</span>
+                        <span>系统日志</span>
+                    </a>
+                    <a href="#" class="nav-item">
+                        <span class="nav-icon">👤</span>
+                        <span>账号管理</span>
+                    </a>
+                </div>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <div class="sidebar-user">
+                    <div class="user-avatar">A</div>
+                    <div class="user-info">
+                        <div class="user-name">Admin</div>
+                        <div class="user-role">管理员</div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <!-- 顶部导航栏 -->
+            <header class="topbar">
+                <div class="topbar-left">
+                    <button class="btn-icon menu-toggle" onclick="toggleSidebar()">☰</button>
+                    <div>
+                        <div class="topbar-title">仪表盘</div>
+                        <div class="topbar-breadcrumb">
+                            <span>首页</span>
+                            <span>›</span>
+                            <span>仪表盘</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="topbar-right">
+                    <button class="btn-icon" title="刷新">🔄</button>
+                    <button class="btn-icon" title="通知">🔔</button>
+                    <button class="btn btn-primary">
+                        <span>➕</span>
+                        <span>新建任务</span>
+                    </button>
+                </div>
+            </header>
+            
+            <!-- 内容区 -->
+            <div class="content-wrapper">
+                <!-- 统计卡片 -->
+                <div class="stats-grid fade-in">
+                    <div class="stat-card">
+                        <div class="stat-icon blue">📥</div>
+                        <div class="stat-value">1,234</div>
+                        <div class="stat-label">总下载数</div>
+                        <div class="stat-trend up">↑ 12% 较上月</div>
+                    </div>
+                    
+                    <div class="stat-card">
+                        <div class="stat-icon green">✅</div>
+                        <div class="stat-value">1,180</div>
+                        <div class="stat-label">下载成功</div>
+                        <div class="stat-trend up">↑ 98% 成功率</div>
+                    </div>
+                    
+                    <div class="stat-card">
+                        <div class="stat-icon orange">⏳</div>
+                        <div class="stat-value">3</div>
+                        <div class="stat-label">进行中</div>
+                        <div class="stat-trend">→ 队列正常</div>
+                    </div>
+                    
+                    <div class="stat-card">
+                        <div class="stat-icon purple">🎵</div>
+                        <div class="stat-value">56</div>
+                        <div class="stat-label">歌单订阅</div>
+                        <div class="stat-trend up">↑ 5 个新订阅</div>
+                    </div>
+                </div>
+                
+                <!-- 快速操作卡片 -->
+                <div class="card fade-in" style="margin-bottom: var(--space-6);">
+                    <div class="card-header">
+                        <div class="card-title">⚡ 快速操作</div>
+                    </div>
+                    <div class="card-body">
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-4);">
+                            <button class="btn btn-primary" style="padding: var(--space-4);">
+                                <span style="font-size: 1.5rem;">🎶</span>
+                                <div>
+                                    <div style="font-weight: 600;">下载歌曲</div>
+                                    <div style="font-size: 0.75rem; opacity: 0.8;">输入链接或 ID</div>
+                                </div>
+                            </button>
+                            
+                            <button class="btn btn-secondary" style="padding: var(--space-4);">
+                                <span style="font-size: 1.5rem;">📀</span>
+                                <div>
+                                    <div style="font-weight: 600;">订阅歌单</div>
+                                    <div style="font-size: 0.75rem; opacity: 0.8;">自动同步更新</div>
+                                </div>
+                            </button>
+                            
+                            <button class="btn btn-ghost" style="padding: var(--space-4); border: 1.5px dashed var(--gray-300);">
+                                <span style="font-size: 1.5rem;">⚙️</span>
+                                <div>
+                                    <div style="font-weight: 600;">配置向导</div>
+                                    <div style="font-size: 0.75rem; opacity: 0.8;">快速设置系统</div>
+                                </div>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 最近任务 -->
+                <div class="card fade-in">
+                    <div class="card-header">
+                        <div class="card-title">📋 最近任务</div>
+                        <button class="btn btn-ghost" style="font-size: 0.85rem;">查看全部 →</button>
+                    </div>
+                    <div class="card-body">
+                        <div style="text-align: center; padding: var(--space-12); color: var(--text-tertiary);">
+                            <div style="font-size: 3rem; margin-bottom: var(--space-4);">🎵</div>
+                            <div>暂无最近任务</div>
+                            <div style="font-size: 0.85rem; margin-top: var(--space-2);">点击上方"新建任务"开始下载</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <script>
+        // 侧边栏切换
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            sidebar.classList.toggle('open');
+        }
+        
+        // 导航切换
+        document.querySelectorAll('.nav-item').forEach(item => {
+            item.addEventListener('click', function(e) {
+                e.preventDefault();
+                document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+                this.classList.add('active');
+                
+                // 移动端自动关闭侧边栏
+                if (window.innerWidth <= 1024) {
+                    toggleSidebar();
+                }
+            });
+        });
+    </script>
+</body>
+</html>

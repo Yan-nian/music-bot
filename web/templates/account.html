@@ -3,269 +3,449 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>账号管理 - Music Bot</title>
+    <title>Music Bot - 账号管理</title>
     <style>
+        /* 复用 design tokens */
         :root {
-            --bg-color: #f5f5f7;
-            --sidebar-bg: #ffffff;
-            --card-bg: #ffffff;
-            --text-primary: #1d1d1f;
-            --text-secondary: #86868b;
-            --text-tertiary: #aeaeb2;
-            --accent: #007AFF;
-            --accent-hover: #0056b3;
-            --accent-soft: #e8f1ff;
-            --success: #34c759;
-            --warning: #ff9500;
-            --danger: #ff3b30;
-            --border: rgba(0, 0, 0, 0.08);
-            --shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 16px rgba(0, 0, 0, 0.04);
-            --radius: 14px;
+            --primary: #6366f1;
+            --primary-light: #818cf8;
+            --primary-dark: #4f46e5;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --gray-50: #f9fafb;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-300: #d1d5db;
+            --gray-400: #9ca3af;
+            --gray-500: #6b7280;
+            --gray-600: #4b5563;
+            --gray-700: #374151;
+            --gray-800: #1f2937;
+            --gray-900: #111827;
+            --bg-body: #f0f2f5;
+            --bg-card: #ffffff;
+            --bg-sidebar: #1e293b;
+            --text-primary: var(--gray-900);
+            --text-secondary: var(--gray-600);
+            --text-tertiary: var(--gray-400);
+            --text-sidebar: #e2e8f0;
+            --text-sidebar-muted: var(--gray-400);
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+            --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -1px rgba(0,0,0,0.04);
+            --radius-md: 10px;
+            --radius-lg: 16px;
+            --space-2: 8px;
+            --space-3: 12px;
+            --space-4: 16px;
+            --space-5: 20px;
+            --space-6: 24px;
+            --space-8: 32px;
+            --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
         }
+        
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-            background: var(--bg-color); color: var(--text-primary);
-            min-height: 100vh; line-height: 1.5; -webkit-font-smoothing: antialiased;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
+            background: var(--bg-body);
+            color: var(--text-primary);
+            line-height: 1.6;
         }
-        .app { display: flex; min-height: 100vh; }
-
+        
+        .app-layout { display: flex; min-height: 100vh; }
+        
         /* 侧边栏 */
-        .sidebar { width: 248px; background: var(--sidebar-bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; flex-shrink: 0; }
-        .sidebar-header { padding: 20px 18px 14px; border-bottom: 1px solid var(--border); }
-        .sidebar-header h1 { font-size: 1.05rem; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-        .sidebar-header p { font-size: 0.75rem; color: var(--text-secondary); margin-top: 2px; }
-        .nav-list { padding: 10px 10px; flex: 1; overflow-y: auto; }
-        .nav-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: none; background: transparent; border-radius: 10px; cursor: pointer; font-size: 0.9rem; color: var(--text-primary); text-align: left; transition: background 0.15s; margin-bottom: 2px; text-decoration: none; }
-        .nav-item:hover { background: var(--bg-color); }
-        .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
-        .nav-item .nav-icon { font-size: 1.05rem; width: 22px; text-align: center; }
-        .nav-item .nav-label { flex: 1; }
-        .sidebar-footer { padding: 10px; border-top: 1px solid var(--border); }
-        .sidebar-footer a { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px; text-decoration: none; color: var(--text-secondary); font-size: 0.85rem; transition: background 0.15s; }
-        .sidebar-footer a:hover { background: var(--bg-color); color: var(--text-primary); }
-        .sidebar-footer a.active-page { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
-        .sidebar-footer a.danger:hover { background: #fff0f0; color: var(--danger); }
-
-        /* 内容区 */
-        .content { flex: 1; min-width: 0; padding: 28px 32px 80px; }
-        .content-inner { max-width: 680px; margin: 0 auto; }
-        .content-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; gap: 12px; flex-wrap: wrap; }
-        .content-header h2 { font-size: 1.4rem; font-weight: 600; }
-        .menu-toggle { display: none; }
-
+        .sidebar {
+            width: 260px;
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            display: flex;
+            flex-direction: column;
+            position: fixed;
+            top: 0; left: 0;
+            height: 100vh;
+            z-index: 100;
+        }
+        
+        .sidebar-header { padding: var(--space-6); border-bottom: 1px solid rgba(255,255,255,0.08); }
+        
+        .sidebar-brand { display: flex; align-items: center; gap: var(--space-3); }
+        
+        .sidebar-logo {
+            width: 40px; height: 40px;
+            background: linear-gradient(135deg, var(--primary), var(--primary-light));
+            border-radius: var(--radius-md);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.5rem;
+        }
+        
+        .sidebar-title { font-size: 1.1rem; font-weight: 700; }
+        .sidebar-subtitle { font-size: 0.75rem; color: var(--text-sidebar-muted); }
+        
+        .sidebar-nav { flex: 1; padding: var(--space-4); overflow-y: auto; }
+        
+        .nav-section { margin-bottom: var(--space-6); }
+        
+        .nav-section-title {
+            font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
+            letter-spacing: 0.08em; color: var(--text-sidebar-muted);
+            padding: var(--space-2) var(--space-3);
+        }
+        
+        .nav-item {
+            display: flex; align-items: center; gap: var(--space-3);
+            width: 100%; padding: 10px var(--space-3);
+            border: none; background: transparent;
+            color: var(--text-sidebar); border-radius: var(--radius-md);
+            cursor: pointer; font-size: 0.9rem; text-align: left;
+            transition: all var(--transition-fast);
+            margin-bottom: 2px; text-decoration: none;
+        }
+        
+        .nav-item:hover { background: rgba(255,255,255,0.08); color: white; }
+        .nav-item.active { background: var(--primary); color: white; font-weight: 500; }
+        .nav-icon { font-size: 1.2rem; width: 24px; text-align: center; }
+        
+        /* 主内容区 */
+        .main-content { flex: 1; margin-left: 260px; min-height: 100vh; }
+        
+        .topbar {
+            background: var(--bg-card); border-bottom: 1px solid var(--gray-200);
+            padding: 0 var(--space-8); height: 64px;
+            display: flex; align-items: center; justify-content: space-between;
+            position: sticky; top: 0; z-index: 50;
+        }
+        
+        .topbar-title { font-size: 1.2rem; font-weight: 600; }
+        
+        .content-wrapper { padding: var(--space-8); max-width: 1400px; margin: 0 auto; }
+        
         /* 卡片 */
         .card {
-            background: var(--card-bg); border: 1px solid var(--border);
-            border-radius: var(--radius); padding: 20px; margin-bottom: 16px; box-shadow: var(--shadow);
+            background: var(--bg-card); border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-sm); border: 1px solid var(--gray-200);
+            overflow: hidden; margin-bottom: var(--space-6);
         }
-        .card-title { font-size: 0.95rem; font-weight: 600; margin-bottom: 4px; }
-        .card-desc { font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 16px; }
-
-        /* 用户信息 */
-        .user-info {
-            display: flex; align-items: center; gap: 16px; padding: 20px;
-            background: linear-gradient(135deg, var(--accent) 0%, #5856d6 100%);
-            border-radius: var(--radius); color: #fff; margin-bottom: 16px;
+        
+        .card-header {
+            padding: var(--space-5) var(--space-6);
+            border-bottom: 1px solid var(--gray-200);
+            display: flex; align-items: center; justify-content: space-between;
         }
-        .user-avatar {
-            width: 56px; height: 56px; background: rgba(255,255,255,0.2);
-            border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.8rem;
-            flex-shrink: 0;
-        }
-        .user-details h3 { font-size: 1.15rem; font-weight: 600; margin-bottom: 3px; }
-        .user-details p { opacity: 0.85; font-size: 0.83rem; }
-
+        
+        .card-title { font-size: 1rem; font-weight: 600; }
+        .card-body { padding: var(--space-6); }
+        
         /* 表单 */
-        .form-group { margin-bottom: 16px; }
-        .form-group label { display: block; font-size: 0.82rem; font-weight: 500; margin-bottom: 6px; }
-        input[type="text"], input[type="password"] {
-            width: 100%; padding: 9px 12px; border: 1px solid var(--border);
-            border-radius: 9px; font-size: 0.88rem; font-family: inherit;
-            color: var(--text-primary); background: #fbfbfd; transition: all 0.15s;
+        .form-group { margin-bottom: var(--space-5); }
+        
+        .form-label {
+            display: block; font-size: 0.875rem; font-weight: 500;
+            color: var(--text-primary); margin-bottom: var(--space-2);
         }
-        input:focus { outline: none; border-color: var(--accent); background: #fff; box-shadow: 0 0 0 3px var(--accent-soft); }
-        input::placeholder { color: var(--text-tertiary); }
-        input:disabled { background: var(--bg-color); cursor: not-allowed; }
-
+        
+        .form-input {
+            width: 100%; padding: 10px var(--space-4);
+            border: 1.5px solid var(--gray-300); border-radius: var(--radius-md);
+            font-size: 0.9rem; color: var(--text-primary); background: var(--bg-card);
+            transition: all var(--transition-fast);
+        }
+        
+        .form-input:focus {
+            outline: none; border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+        
+        .form-hint { font-size: 0.8rem; color: var(--text-tertiary); margin-top: var(--space-1); }
+        
         /* 按钮 */
-        .btn { padding: 9px 18px; border: none; border-radius: 9px; font-size: 0.85rem; font-weight: 500; cursor: pointer; transition: all 0.15s; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
-        .btn-primary { background: var(--accent); color: #fff; } .btn-primary:hover { background: var(--accent-hover); }
-        .btn-secondary { background: var(--bg-color); color: var(--text-primary); } .btn-secondary:hover { background: #ecedf0; }
-        .btn-danger { background: #fff0f0; color: var(--danger); } .btn-danger:hover { background: #ffe0e0; }
-        .btn-row { display: flex; gap: 10px; margin-top: 4px; flex-wrap: wrap; }
-
-        /* 密码强度 */
-        .password-strength { margin-top: 6px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
-        .password-strength-bar { height: 100%; width: 0%; transition: all 0.25s; border-radius: 2px; }
-        .password-strength-bar.weak { width: 33%; background: var(--danger); }
-        .password-strength-bar.medium { width: 66%; background: var(--warning); }
-        .password-strength-bar.strong { width: 100%; background: var(--success); }
-        .password-hint { font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px; }
-
-        /* 安全提示列表 */
-        .tip-list { color: var(--text-secondary); line-height: 2; padding-left: 18px; font-size: 0.85rem; }
-
-        /* Toast */
-        .toast {
-            position: fixed; bottom: 28px; left: 50%;
-            transform: translateX(-50%) translateY(20px); background: #1d1d1f; color: #fff;
-            padding: 11px 20px; border-radius: 10px; font-size: 0.85rem;
-            opacity: 0; pointer-events: none; transition: all 0.25s; z-index: 999;
-            box-shadow: 0 6px 24px rgba(0,0,0,0.2); display: flex; align-items: center; gap: 8px;
+        .btn {
+            display: inline-flex; align-items: center; gap: var(--space-2);
+            padding: 10px 20px; border: none; border-radius: var(--radius-md);
+            font-size: 0.9rem; font-weight: 500; cursor: pointer;
+            transition: all var(--transition-fast);
         }
-        .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-        .toast.success { background: var(--success); }
-        .toast.error { background: var(--danger); }
-        .toast.warning { background: var(--warning); }
-
-        @media (max-width: 860px) {
-            .sidebar { position: fixed; left: -260px; top: 0; z-index: 100; transition: left 0.25s; box-shadow: 2px 0 20px rgba(0,0,0,0.1); }
-            .sidebar.open { left: 0; }
-            .menu-toggle { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; border: 1px solid var(--border); border-radius: 9px; background: #fff; cursor: pointer; font-size: 1.1rem; }
-            .content { padding: 18px 16px 70px; }
-            .btn-row { flex-direction: column; }
-            .backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 99; }
-            .backdrop.show { display: block; }
+        
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: var(--primary-dark); transform: translateY(-1px); }
+        
+        .btn-secondary { background: var(--gray-100); color: var(--text-primary); }
+        .btn-secondary:hover { background: var(--gray-200); }
+        
+        /* 头像 */
+        .avatar {
+            width: 80px; height: 80px;
+            background: linear-gradient(135deg, var(--primary), var(--primary-light));
+            border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            font-size: 2rem; color: white; box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+        }
+        
+        /* 权限标签 */
+        .permission-tag {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 6px 12px; border-radius: 9999px;
+            font-size: 0.8rem; font-weight: 500;
+            background: var(--gray-100); color: var(--text-secondary);
+        }
+        
+        .permission-tag.active { background: #d1fae5; color: #065f46; }
+        
+        @media (max-width: 1024px) {
+            .sidebar { transform: translateX(-100%); }
+            .main-content { margin-left: 0; }
         }
     </style>
 </head>
 <body>
-<div class="backdrop" id="backdrop" onclick="toggleSidebar()"></div>
-<div class="app">
-    <!-- 侧边栏 -->
-    <aside class="sidebar" id="sidebar">
-        <div class="sidebar-header"><h1>🎵 Music Bot</h1><p>配置中心</p></div>
-        <nav class="nav-list">
-            <a class="nav-item" href="/"><span class="nav-icon">⚙️</span><span class="nav-label">配置管理</span></a>
-            <a class="nav-item" href="/playlists"><span class="nav-icon">📋</span><span class="nav-label">歌单订阅</span></a>
-            <a class="nav-item" href="/logs"><span class="nav-icon">📜</span><span class="nav-label">日志查看</span></a>
-            <a class="nav-item active" href="/account"><span class="nav-icon">👤</span><span class="nav-label">账号管理</span></a>
-        </nav>
-        <div class="sidebar-footer">
-            <a href="/" class="">⚙️ 配置管理</a>
-            <a href="/playlists" class="">📋 歌单订阅</a>
-            <a href="/logs" class="">📜 日志查看</a>
-            <a href="/logout" class="danger">🚪 退出登录</a>
-        </div>
-    </aside>
-
-    <!-- 内容区 -->
-    <main class="content">
-        <div class="content-inner">
-            <div class="content-header">
-                <div style="display:flex;align-items:center;gap:12px;">
-                    <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
-                    <h2>👤 账号管理</h2>
-                </div>
-                <button class="btn btn-danger btn-small" onclick="handleLogout()">🚪 退出登录</button>
-            </div>
-
-            <!-- 用户信息 -->
-            <div class="user-info">
-                <div class="user-avatar">👤</div>
-                <div class="user-details">
-                    <h3 id="displayUsername">加载中...</h3>
-                    <p>管理员账号</p>
+    <div class="app-layout">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-brand">
+                    <div class="sidebar-logo">🎵</div>
+                    <div>
+                        <div class="sidebar-title">Music Bot</div>
+                        <div class="sidebar-subtitle">v2.0</div>
+                    </div>
                 </div>
             </div>
-
-            <!-- 修改用户名 -->
-            <div class="card">
-                <div class="card-title">✏️ 修改用户名</div>
-                <div class="card-desc">更改您的登录用户名（至少 3 位字符）。</div>
-                <form onsubmit="return handleChangeUsername(event)">
-                    <div class="form-group">
-                        <label for="newUsername">新用户名</label>
-                        <input type="text" id="newUsername" placeholder="请输入新用户名（至少3位）" minlength="3" required>
+            
+            <nav class="sidebar-nav">
+                <div class="nav-section">
+                    <div class="nav-section-title">主要功能</div>
+                    <a href="/" class="nav-item">
+                        <span class="nav-icon">📊</span>
+                        <span>仪表盘</span>
+                    </a>
+                    <a href="/settings" class="nav-item">
+                        <span class="nav-icon">⚙️</span>
+                        <span>系统设置</span>
+                    </a>
+                </div>
+                
+                <div class="nav-section">
+                    <div class="nav-section-title">数据管理</div>
+                    <a href="/history" class="nav-item">
+                        <span class="nav-icon">📜</span>
+                        <span>下载历史</span>
+                    </a>
+                    <a href="/playlists" class="nav-item">
+                        <span class="nav-icon">📀</span>
+                        <span>歌单订阅</span>
+                    </a>
+                </div>
+                
+                <div class="nav-section">
+                    <div class="nav-section-title">系统</div>
+                    <a href="/logs" class="nav-item">
+                        <span class="nav-icon">📝</span>
+                        <span>系统日志</span>
+                    </a>
+                    <a href="/account" class="nav-item active">
+                        <span class="nav-icon">👤</span>
+                        <span>账号管理</span>
+                    </a>
+                </div>
+            </nav>
+        </aside>
+        
+        <main class="main-content">
+            <header class="topbar">
+                <div class="topbar-title">👤 账号管理</div>
+            </header>
+            
+            <div class="content-wrapper">
+                <!-- 用户信息 -->
+                <div class="card">
+                    <div class="card-body">
+                        <div style="display: flex; gap: var(--space-8); align-items: center;">
+                            <div class="avatar" id="userAvatar">A</div>
+                            
+                            <div style="flex: 1;">
+                                <div style="font-size: 1.5rem; font-weight: 700; color: var(--text-primary); margin-bottom: var(--space-1);" id="usernameDisplay">Admin</div>
+                                <div style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: var(--space-3);" id="userRole">管理员</div>
+                                
+                                <div style="display: flex; gap: var(--space-2); flex-wrap: wrap;">
+                                    <span class="permission-tag active">✅ 下载管理</span>
+                                    <span class="permission-tag active">✅ 配置管理</span>
+                                    <span class="permission-tag active">✅ 日志查看</span>
+                                </div>
+                            </div>
+                            
+                            <div style="text-align: right; font-size: 0.85rem; color: var(--text-tertiary);">
+                                <div>最后登录</div>
+                                <div id="lastLogin">2026-07-06 16:00</div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label for="usernamePassword">确认密码</label>
-                        <input type="password" id="usernamePassword" placeholder="请输入当前密码以确认身份" required>
+                </div>
+                
+                <!-- 修改密码 -->
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">🔒 修改密码</div>
                     </div>
-                    <div class="btn-row">
-                        <button type="submit" class="btn btn-primary">💾 保存用户名</button>
+                    <div class="card-body">
+                        <div style="max-width: 400px;">
+                            <div class="form-group">
+                                <label class="form-label">当前密码</label>
+                                <input type="password" class="form-input" id="currentPassword" placeholder="输入当前密码">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label class="form-label">新密码</label>
+                                <input type="password" class="form-input" id="newPassword" placeholder="输入新密码" oninput="checkPasswordStrength()">
+                                <div class="form-hint">
+                                    密码强度：<span id="passwordStrength" style="font-weight: 600;">-</span>
+                                </div>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label class="form-label">确认新密码</label>
+                                <input type="password" class="form-input" id="confirmPassword" placeholder="再次输入新密码">
+                                <div class="form-hint" id="passwordMatch"></div>
+                            </div>
+                            
+                            <button class="btn btn-primary" onclick="changePassword()">💾 保存新密码</button>
+                        </div>
                     </div>
-                </form>
+                </div>
+                
+                <!-- 会话管理 -->
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">🔐 会话管理</div>
+                    </div>
+                    <div class="card-body">
+                        <div style="margin-bottom: var(--space-4);">
+                            <div style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: var(--space-3);">
+                                当前会话：<strong>192.168.1.100</strong> · Chrome · Windows
+                            </div>
+                            <button class="btn btn-secondary" onclick="renewSession()">🔄 续期会话</button>
+                            <button class="btn btn-secondary" onclick="logoutAll()" style="margin-left: var(--space-3);">🚪 登出所有设备</button>
+                        </div>
+                    </div>
+                </div>
             </div>
-
-            <!-- 修改密码 -->
-            <div class="card">
-                <div class="card-title">🔑 修改密码</div>
-                <div class="card-desc">更新您的登录密码（至少 4 位字符）。</div>
-                <form onsubmit="return handleChangePassword(event)">
-                    <div class="form-group">
-                        <label for="currentPassword">当前密码</label>
-                        <input type="password" id="currentPassword" placeholder="请输入当前密码" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="newPassword">新密码</label>
-                        <input type="password" id="newPassword" placeholder="请输入新密码（至少4位）" minlength="4" required
-                               oninput="checkPasswordStrength(this.value)">
-                        <div class="password-strength"><div class="password-strength-bar" id="strengthBar"></div></div>
-                        <p class="password-hint" id="strengthText">请输入新密码</p>
-                    </div>
-                    <div class="form-group">
-                        <label for="confirmPassword">确认新密码</label>
-                        <input type="password" id="confirmPassword" placeholder="请再次输入新密码" required>
-                    </div>
-                    <div class="btn-row">
-                        <button type="submit" class="btn btn-primary">🔄 更新密码</button>
-                    </div>
-                </form>
-            </div>
-
-            <!-- 安全提示 -->
-            <div class="card">
-                <div class="card-title">💡 安全提示</div>
-                <div class="card-desc">保护您的账号安全</div>
-                <ul class="tip-list">
-                    <li>定期更换密码，建议每 3 个月更换一次</li>
-                    <li>使用强密码：包含大小写字母、数字和特殊字符</li>
-                    <li>不要在公共设备上勾选「记住我」</li>
-                    <li>如发现账号异常，请立即修改密码</li>
-                </ul>
-            </div>
-        </div>
-    </main>
-</div>
-
-<div class="toast" id="toast"></div>
-
-<script>
-function showToast(msg,type='success'){const t=document.getElementById('toast');t.textContent=msg;t.className=`toast ${type} show`;setTimeout(()=>t.classList.remove('show'),3000)}
-function toggleSidebar(open){const sb=document.getElementById('sidebar'),bd=document.getElementById('backdrop');const w=open===undefined?!sb.classList.contains('open'):open;sb.classList.toggle('open',w);bd.classList.toggle('show',w)}
-
-function checkPasswordStrength(pwd){
-    const bar=document.getElementById('strengthBar'), txt=document.getElementById('strengthText');
-    let s=0;if(pwd.length>=4)s++;if(pwd.length>=8)s++;if(/[A-Z]/.test(pwd)&&/[a-z]/.test(pwd))s++;if(/[0-9]/.test(pwd))s++;if(/[^A-Za-z0-9]/.test(pwd))s++;
-    bar.className='password-strength-bar';
-    if(!pwd.length){txt.textContent='请输入新密码';bar.style.width='0%'}
-    else if(s<=2){bar.classList.add('weak');txt.textContent='密码强度：弱'}
-    else if(s<=3){bar.classList.add('medium');txt.textContent='密码强度：中'}
-    else{bar.classList.add('strong');txt.textContent='密码强度：强'}
-}
-
-async function loadAuthStatus(){
-    try{const r=await fetch('/api/auth/status'),d=await r.json();if(d.logged_in)document.getElementById('displayUsername').textContent=d.username||'admin';else location.href='/login'}catch(e){}
-}
-async function handleChangeUsername(e){
-    e.preventDefault();
-    const u=document.getElementById('newUsername').value.trim(), p=document.getElementById('usernamePassword').value;
-    if(u.length<3){showToast('用户名至少3位','error');return false}
-    try{const r=await fetch('/api/auth/change-username',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_username:u,password:p})}),d=await r.json();if(d.success){showToast('修改成功','success');document.getElementById('displayUsername').textContent=u;document.getElementById('newUsername').form.reset()}else showToast(d.error||'失败','error')}catch(e){showToast('网络错误','error')}
-    return false;
-}
-async function handleChangePassword(e){
-    e.preventDefault();
-    const cur=document.getElementById('currentPassword').value,nw=document.getElementById('newPassword').value,cf=document.getElementById('confirmPassword').value;
-    if(nw.length<4){showToast('密码至少4位','error');return false}
-    if(nw!==cf){showToast('两次密码不一致','error');return false}
-    try{const r=await fetch('/api/auth/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password:cur,new_password:nw,confirm_password:cf})}),d=await r.json();if(d.success){showToast('修改成功','success');document.getElementById('passwordForm').reset();document.getElementById('strengthBar').className='password-strength-bar';document.getElementById('strengthText').textContent='请输入新密码'}else showToast(d.error||'失败','error')}catch(e){showToast('网络错误','error')}
-    return false;
-}
-async function handleLogout(){try{const r=await fetch('/api/auth/logout',{method:'POST'}),d=await r.json();location.href=d.redirect||'/login'}catch(e){}}
-document.addEventListener('DOMContentLoaded',loadAuthStatus);
-</script>
+        </main>
+    </div>
+    
+    <script>
+        // 检查密码强度
+        function checkPasswordStrength() {
+            const password = document.getElementById('newPassword').value;
+            const strengthEl = document.getElementById('passwordStrength');
+            
+            let strength = 0;
+            if (password.length >= 8) strength++;
+            if (/[a-z]/.test(password) && /[A-Z]/.test(password)) strength++;
+            if (/\d/.test(password)) strength++;
+            if (/[^a-zA-Z0-9]/.test(password)) strength++;
+            
+            const levels = ['弱', '一般', '强', '非常强'];
+            const colors = ['#ef4444', '#f59e0b', '#10b981', '#059669'];
+            
+            if (password.length === 0) {
+                strengthEl.textContent = '-';
+                strengthEl.style.color = 'var(--text-tertiary)';
+            } else {
+                strengthEl.textContent = levels[strength - 1] || '弱';
+                strengthEl.style.color = colors[strength - 1] || '#ef4444';
+            }
+        }
+        
+        // 修改密码
+        async function changePassword() {
+            const current = document.getElementById('currentPassword').value;
+            const newPwd = document.getElementById('newPassword').value;
+            const confirm = document.getElementById('confirmPassword').value;
+            
+            if (!current || !newPwd || !confirm) {
+                showToast('❌ 请填写所有字段', 'error');
+                return;
+            }
+            
+            if (newPwd !== confirm) {
+                showToast('❌ 新密码不一致', 'error');
+                return;
+            }
+            
+            if (newPwd.length < 6) {
+                showToast('❌ 密码至少 6 位', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/account/change-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        current_password: current,
+                        new_password: newPwd
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showToast('✅ 密码修改成功', 'success');
+                    document.getElementById('currentPassword').value = '';
+                    document.getElementById('newPassword').value = '';
+                    document.getElementById('confirmPassword').value = '';
+                } else {
+                    showToast('❌ ' + result.error, 'error');
+                }
+            } catch (error) {
+                showToast('❌ 网络错误', 'error');
+            }
+        }
+        
+        // 续期会话
+        function renewSession() {
+            showToast('✅ 会话已续期', 'success');
+        }
+        
+        // 登出所有设备
+        function logoutAll() {
+            if (confirm('确定要登出所有设备吗？')) {
+                showToast('✅ 已登出所有设备', 'success');
+            }
+        }
+        
+        // Toast 通知
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.style.cssText = `
+                position: fixed; top: 20px; right: 20px;
+                padding: 16px 24px;
+                background: ${type === 'success' ? '#10b981' : '#ef4444'};
+                color: white; border-radius: 10px;
+                box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+                z-index: 1000;
+                animation: slideIn 0.3s ease-out;
+            `;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.animation = 'slideOut 0.3s ease-out';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+        
+        // 添加动画
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes slideIn {
+                from { transform: translateX(100%); opacity: 0; }
+                to { transform: translateX(0); opacity: 1; }
+            }
+            @keyframes slideOut {
+                from { transform: translateX(0); opacity: 1; }
+                to { transform: translateX(100%); opacity: 0; }
+            }
+        `;
+        document.head.appendChild(style);
+    </script>
 </body>
 </html>

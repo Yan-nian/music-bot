@@ -3,325 +3,497 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>日志查看 - Music Bot</title>
+    <title>Music Bot - 系统日志</title>
     <style>
+        /* 复用 design tokens */
         :root {
-            --bg-color: #f5f5f7;
-            --sidebar-bg: #ffffff;
-            --card-bg: #ffffff;
-            --text-primary: #1d1d1f;
-            --text-secondary: #86868b;
-            --text-tertiary: #aeaeb2;
-            --accent: #007AFF;
-            --accent-hover: #0056b3;
-            --accent-soft: #e8f1ff;
-            --success: #34c759;
-            --warning: #ff9500;
-            --danger: #ff3b30;
-            --border: rgba(0, 0, 0, 0.08);
-            --shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 16px rgba(0, 0, 0, 0.04);
-            --radius: 14px;
+            --primary: #6366f1;
+            --primary-light: #818cf8;
+            --primary-dark: #4f46e5;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --info: #3b82f6;
+            --gray-50: #f9fafb;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-300: #d1d5db;
+            --gray-400: #9ca3af;
+            --gray-500: #6b7280;
+            --gray-600: #4b5563;
+            --gray-700: #374151;
+            --gray-800: #1f2937;
+            --gray-900: #111827;
+            --bg-body: #f0f2f5;
+            --bg-card: #ffffff;
+            --bg-sidebar: #1e293b;
+            --bg-dark: #1e293b;
+            --text-primary: var(--gray-900);
+            --text-secondary: var(--gray-600);
+            --text-tertiary: var(--gray-400);
+            --text-sidebar: #e2e8f0;
+            --text-sidebar-muted: var(--gray-400);
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+            --radius-md: 10px;
+            --radius-lg: 16px;
+            --space-2: 8px;
+            --space-3: 12px;
+            --space-4: 16px;
+            --space-5: 20px;
+            --space-6: 24px;
+            --space-8: 32px;
+            --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
         }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        * { margin:0; padding:0; box-sizing: border-box; }
+        
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-            background: var(--bg-color); color: var(--text-primary);
-            min-height: 100vh; line-height: 1.5; -webkit-font-smoothing: antialiased;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
+            background: var(--bg-body);
+            color: var(--text-primary);
+            line-height: 1.6;
         }
-        .app { display: flex; min-height: 100vh; }
-
+        
+        .app-layout { display: flex; min-height: 100vh; }
+        
         /* 侧边栏 */
-        .sidebar { width: 248px; background: var(--sidebar-bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; flex-shrink: 0; }
-        .sidebar-header { padding: 20px 18px 14px; border-bottom: 1px solid var(--border); }
-        .sidebar-header h1 { font-size: 1.05rem; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-        .sidebar-header p { font-size: 0.75rem; color: var(--text-secondary); margin-top: 2px; }
-        .nav-list { padding: 10px 10px; flex: 1; overflow-y: auto; }
-        .nav-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: none; background: transparent; border-radius: 10px; cursor: pointer; font-size: 0.9rem; color: var(--text-primary); text-align: left; transition: background 0.15s; margin-bottom: 2px; text-decoration: none; }
-        .nav-item:hover { background: var(--bg-color); }
-        .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
-        .nav-item .nav-icon { font-size: 1.05rem; width: 22px; text-align: center; }
-        .nav-item .nav-label { flex: 1; }
-        .sidebar-footer { padding: 10px; border-top: 1px solid var(--border); }
-        .sidebar-footer a { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px; text-decoration: none; color: var(--text-secondary); font-size: 0.85rem; transition: background 0.15s; }
-        .sidebar-footer a:hover { background: var(--bg-color); color: var(--text-primary); }
-        .sidebar-footer a.active-page { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
-        .sidebar-footer a.danger:hover { background: #fff0f0; color: var(--danger); }
-
-        /* 内容区 */
-        .content { flex: 1; min-width: 0; padding: 28px 32px 80px; }
-        .content-inner { max-width: 1100px; margin: 0 auto; }
-        .content-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; gap: 12px; flex-wrap: wrap; }
-        .content-header h2 { font-size: 1.4rem; font-weight: 600; }
-        .menu-toggle { display: none; }
-
+        .sidebar {
+            width: 260px;
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            display: flex;
+            flex-direction: column;
+            position: fixed;
+            top: 0; left: 0;
+            height: 100vh;
+            z-index: 100;
+        }
+        
+        .sidebar-header { padding: var(--space-6); border-bottom: 1px solid rgba(255,255,255,0.08); }
+        
+        .sidebar-brand { display: flex; align-items: center; gap: var(--space-3); }
+        
+        .sidebar-logo {
+            width: 40px; height: 40px;
+            background: linear-gradient(135deg, var(--primary), var(--primary-light));
+            border-radius: var(--radius-md);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.5rem;
+        }
+        
+        .sidebar-title { font-size: 1.1rem; font-weight: 700; }
+        .sidebar-subtitle { font-size: 0.75rem; color: var(--text-sidebar-muted); }
+        
+        .sidebar-nav { flex: 1; padding: var(--space-4); overflow-y: auto; }
+        
+        .nav-section { margin-bottom: var(--space-6); }
+        .nav-section-title {
+            font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
+            letter-spacing: 0.08em; color: var(--text-sidebar-muted);
+            padding: var(--space-2) var(--space-3);
+        }
+        
+        .nav-item {
+            display: flex; align-items: center; gap: var(--space-3);
+            width: 100%; padding: 10px var(--space-3);
+            border: none; background: transparent;
+            color: var(--text-sidebar); border-radius: var(--radius-md);
+            cursor: pointer; font-size: 0.9rem; text-align: left;
+            transition: all var(--transition-fast);
+            margin-bottom: 2px; text-decoration: none;
+        }
+        
+        .nav-item:hover { background: rgba(255,255,255,0.08); color: white; }
+        .nav-item.active { background: var(--primary); color: white; font-weight: 500; }
+        .nav-icon { font-size: 1.2rem; width: 24px; text-align: center; }
+        
+        /* 主内容区 */
+        .main-content { flex: 1; margin-left: 260px; min-height: 100vh; }
+        
+        .topbar {
+            background: var(--bg-card); border-bottom: 1px solid var(--gray-200);
+            padding: 0 var(--space-8); height: 64px;
+            display: flex; align-items: center; justify-content: space-between;
+            position: sticky; top: 0; z-index: 50;
+        }
+        
+        .topbar-title { font-size: 1.2rem; font-weight: 600; }
+        
+        .content-wrapper { padding: var(--space-8); max-width: 1400px; margin: 0 auto; }
+        
         /* 卡片 */
-        .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; box-shadow: var(--shadow); }
-        .card-title { font-size: 0.95rem; font-weight: 600; margin-bottom: 4px; }
-
-        /* 统计卡片 */
-        .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 16px; }
-        .stat-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px; text-align: center; box-shadow: var(--shadow); }
-        .stat-value { font-size: 1.6rem; font-weight: 700; color: var(--accent); }
-        .stat-label { font-size: 0.75rem; color: var(--text-secondary); margin-top: 3px; }
-        .stat-card.info .stat-value { color: var(--accent); }
-        .stat-card.warning .stat-value { color: var(--warning); }
-        .stat-card.error .stat-value { color: var(--danger); }
-        .stat-card.success .stat-value { color: var(--success); }
-
-        /* 筛选 */
-        .filter-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
-        .filter-group { flex: 1; min-width: 140px; }
-        .filter-group label { display: block; font-size: 0.82rem; font-weight: 500; margin-bottom: 6px; }
-        input, select { width: 100%; padding: 9px 12px; border: 1px solid var(--border); border-radius: 9px; font-size: 0.88rem; font-family: inherit; color: var(--text-primary); background: #fbfbfd; transition: border 0.15s, background 0.15s; }
-        input:focus, select:focus { outline: none; border-color: var(--accent); background: #fff; box-shadow: 0 0 0 3px var(--accent-soft); }
-
+        .card {
+            background: var(--bg-card); border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-sm); border: 1px solid var(--gray-200);
+            overflow: hidden; margin-bottom: var(--space-6);
+        }
+        
+        .card-header {
+            padding: var(--space-5) var(--space-6);
+            border-bottom: 1px solid var(--gray-200);
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        
+        .card-title { font-size: 1rem; font-weight: 600; }
+        .card-body { padding: var(--space-6); }
+        
+        /* 日志容器 */
+        .log-container {
+            background: var(--bg-dark);
+            border-radius: var(--radius-md);
+            padding: var(--space-5);
+            max-height: 600px;
+            overflow-y: auto;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.85rem;
+            line-height: 1.8;
+        }
+        
+        .log-line {
+            display: flex; gap: var(--space-3);
+            padding: 2px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+        }
+        
+        .log-time {
+            color: var(--gray-400);
+            font-size: 0.8rem;
+            flex-shrink: 0;
+            min-width: 80px;
+        }
+        
+        .log-level {
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 1px 8px;
+            border-radius: 4px;
+            flex-shrink: 0;
+            min-width: 60px;
+            text-align: center;
+        }
+        
+        .log-level.info { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+        .log-level.warning { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+        .log-level.error { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+        .log-level.success { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+        
+        .log-message { color: #e2e8f0; flex: 1; }
+        
         /* 按钮 */
-        .btn { padding: 9px 16px; border: none; border-radius: 9px; font-size: 0.85rem; font-weight: 500; cursor: pointer; transition: all 0.15s; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
-        .btn-primary { background: var(--accent); color: #fff; } .btn-primary:hover { background: var(--accent-hover); }
-        .btn-secondary { background: var(--bg-color); color: var(--text-primary); } .btn-secondary:hover { background: #ecedf0; }
-        .btn-success { background: var(--success); color: #fff; } .btn-success:hover { background: #2db84d; }
-        .btn-warning { background: #fff3e6; color: var(--warning); } .btn-warning:hover { background: #ffe8cc; }
-        .btn-danger { background: #fff0f0; color: var(--danger); } .btn-danger:hover { background: #ffe0e0; }
-        .btn-small { padding: 6px 12px; font-size: 0.8rem; }
-        .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
-
-        /* 日志表格 */
-        .log-table-container { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
-        .log-table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
-        .log-table th, .log-table td { padding: 11px 14px; text-align: left; border-bottom: 1px solid var(--border); }
-        .log-table th { background: var(--bg-color); font-weight: 600; color: var(--text-secondary); font-size: 0.75rem; letter-spacing: 0.4px; white-space: nowrap; }
-        .log-table tbody tr:hover { background: rgba(0,0,0,0.02); }
-        .log-table tr:last-child td { border-bottom: none; }
-
-        .log-level { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 0.72rem; font-weight: 600; }
-        .log-level.DEBUG { background: rgba(134,134,139,0.1); color: var(--text-secondary); }
-        .log-level.INFO { background: var(--accent-soft); color: var(--accent); }
-        .log-level.WARNING { background: rgba(255,149,0,0.1); color: var(--warning); }
-        .log-level.ERROR { background: rgba(255,59,48,0.08); color: var(--danger); }
-
-        .log-category { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 0.72rem; background: var(--bg-color); color: var(--text-secondary); }
-        .log-category.metadata { background: rgba(88,86,214,0.08); color: #5856d6; }
-        .log-category.download { background: rgba(52,199,89,0.08); color: var(--success); }
-        .log-category.telegram { background: rgba(0,136,204,0.08); color: #0088cc; }
-
-        .log-message { max-width: 480px; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; }
-        .log-time { font-size: 0.78rem; color: var(--text-secondary); white-space: nowrap; }
-
-        /* 分页 */
-        .pagination { display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 18px; padding: 16px 0; }
-        .pagination button { padding: 8px 16px; border: 1px solid var(--border); background: var(--card-bg); border-radius: 8px; cursor: pointer; font-size: 0.83rem; transition: all 0.15s; }
-        .pagination button:hover:not(:disabled) { background: var(--accent); color: #fff; border-color: var(--accent); }
-        .pagination button:disabled { opacity: 0.45; cursor: not-allowed; }
-        .page-info { padding: 8px 14px; color: var(--text-secondary); font-size: 0.83rem; }
-
-        /* 空状态 */
-        .empty-state { text-align: center; padding: 50px 20px; }
-        .empty-state .icon { font-size: 3rem; margin-bottom: 12px; }
-        .empty-state h3 { font-size: 1.05rem; margin-bottom: 6px; }
-        .empty-state p { color: var(--text-secondary); font-size: 0.85rem; }
-
-        .loading { text-align: center; padding: 36px; color: var(--text-secondary); }
-        .spinner { display: inline-block; width: 28px; height: 28px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 10px; }
-        @keyframes spin { to { transform: rotate(360deg); } }
-
-        /* Toast */
-        .toast { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(20px); background: #1d1d1f; color: #fff; padding: 11px 20px; border-radius: 10px; font-size: 0.85rem; opacity: 0; pointer-events: none; transition: all 0.25s; z-index: 999; box-shadow: 0 6px 24px rgba(0,0,0,0.2); }
-        .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-        .toast.error { background: var(--danger); } .toast.success { background: var(--success); }
-
-        /* 模态框 */
-        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 1000; align-items: center; justify-content: center; }
-        .modal.show { display: flex; }
-        .modal-content { background: #fff; border-radius: var(--radius); padding: 24px; max-width: 500px; width: 90%; box-shadow: 0 20px 60px rgba(0,0,0,0.2); }
-        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
-        .modal-header h3 { font-size: 1.05rem; font-weight: 600; }
-        .modal-close { background: var(--bg-color); border: none; font-size: 1.1rem; cursor: pointer; color: var(--text-secondary); width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
-        .modal-close:hover { background: var(--danger); color: #fff; }
-        .modal-body { margin-bottom: 18px; }
-        .modal-footer { display: flex; gap: 10px; justify-content: flex-end; }
-
-        /* 导出选项 */
-        .export-options { display: flex; flex-direction: column; gap: 10px; }
-        .export-option { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; transition: all 0.15s; }
-        .export-option:hover { background: var(--accent-soft); border-color: var(--accent); }
-        .export-option.selected { background: var(--accent-soft); border-color: var(--accent); }
-        .export-option input { display: none; }
-        .export-option .icon { font-size: 1.3rem; }
-        .export-option .info { flex: 1; }
-        .export-option .info .title { font-weight: 600; font-size: 0.88rem; }
-        .export-option .info .desc { font-size: 0.78rem; color: var(--text-secondary); margin-top: 2px; }
-
-        @media (max-width: 860px) {
-            .sidebar { position: fixed; left: -260px; top: 0; z-index: 100; transition: left 0.25s; box-shadow: 2px 0 20px rgba(0,0,0,0.1); }
-            .sidebar.open { left: 0; }
-            .menu-toggle { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; border: 1px solid var(--border); border-radius: 9px; background: #fff; cursor: pointer; font-size: 1.1rem; }
-            .content { padding: 18px 16px 70px; }
-            .filter-row { flex-direction: column; }
-            .log-table { font-size: 0.75rem; }
-            .log-table th, .log-table td { padding: 8px 10px; }
-            .log-message { max-width: 180px; }
-            .stats-row { grid-template-columns: repeat(2, 1fr); }
-            .backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 99; }
-            .backdrop.show { display: block; }
+        .btn {
+            display: inline-flex; align-items: center; gap: var(--space-2);
+            padding: 8px 16px; border: none;
+            border-radius: var(--radius-md);
+            font-size: 0.9rem; font-weight: 500;
+            cursor: pointer; transition: all var(--transition-fast);
+        }
+        
+        .btn-secondary { background: var(--gray-100); color: var(--text-primary); }
+        .btn-secondary:hover { background: var(--gray-200); }
+        
+        .btn-ghost { background: transparent; color: var(--text-secondary); }
+        .btn-ghost:hover { background: var(--gray-100); }
+        
+        /* 筛选器 */
+        .filters {
+            display: flex; gap: var(--space-3);
+            align-items: center; flex-wrap: wrap;
+        }
+        
+        .filter-input {
+            padding: 8px 12px; border: 1.5px solid var(--gray-300);
+            border-radius: var(--radius-md);
+            font-size: 0.85rem; color: var(--text-primary);
+            background: var(--bg-card);
+        }
+        
+        .filter-input:focus { outline: none; border-color: var(--primary); }
+        
+        .filter-btn {
+            padding: 6px 12px; border: 1.5px solid var(--gray-300);
+            border-radius: var(--radius-md);
+            font-size: 0.85rem; cursor: pointer;
+            background: var(--bg-card); color: var(--text-secondary);
+            transition: all var(--transition-fast);
+        }
+        
+        .filter-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+        .filter-btn:hover { border-color: var(--primary); }
+        
+        @media (max-width: 1024px) {
+            .sidebar { transform: translateX(-100%); }
+            .main-content { margin-left: 0; }
         }
     </style>
 </head>
 <body>
-<div class="backdrop" id="backdrop" onclick="toggleSidebar()"></div>
-<div class="app">
-    <aside class="sidebar" id="sidebar">
-        <div class="sidebar-header"><h1>🎵 Music Bot</h1><p>配置中心</p></div>
-        <nav class="nav-list">
-            <a class="nav-item" href="/"><span class="nav-icon">⚙️</span><span class="nav-label">配置管理</span></a>
-            <a class="nav-item" href="/playlists"><span class="nav-icon">📋</span><span class="nav-label">歌单订阅</span></a>
-            <a class="nav-item active" href="/logs"><span class="nav-icon">📜</span><span class="nav-label">日志查看</span></a>
-            <a class="nav-item" href="/account"><span class="nav-icon">👤</span><span class="nav-label">账号管理</span></a>
-        </nav>
-        <div class="sidebar-footer">
-            <a href="/" class="">⚙️ 配置管理</a>
-            <a href="/playlists" class="">📋 歌单订阅</a>
-            <a href="/account" class="">👤 账号管理</a>
-            <a href="/logout" class="danger">🚪 退出登录</a>
-        </div>
-    </aside>
-
-    <main class="content">
-        <div class="content-inner">
-            <div class="content-header">
-                <div style="display:flex;align-items:center;gap:12px;">
-                    <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
-                    <h2>📜 日志查看</h2>
-                </div>
-                <div class="btn-row">
-                    <button class="btn btn-success btn-small" onclick="showExportModal()">📥 导出日志</button>
-                    <button class="btn btn-warning btn-small" onclick="exportMetadataLogs()">🏷️ 元数据日志</button>
-                    <button class="btn btn-danger btn-small" onclick="showClearModal()">🗑️ 清理</button>
+    <div class="app-layout">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-brand">
+                    <div class="sidebar-logo">🎵</div>
+                    <div>
+                        <div class="sidebar-title">Music Bot</div>
+                        <div class="sidebar-subtitle">v2.0</div>
+                    </div>
                 </div>
             </div>
-
-            <!-- 统计 -->
-            <div class="stats-row" id="statsRow">
-                <div class="stat-card"><div class="stat-value" id="totalLogs">-</div><div class="stat-label">总日志</div></div>
-                <div class="stat-card info"><div class="stat-value" id="infoLogs">-</div><div class="stat-label">INFO</div></div>
-                <div class="stat-card warning"><div class="stat-value" id="warningLogs">-</div><div class="stat-label">WARNING</div></div>
-                <div class="stat-card error"><div class="stat-value" id="errorLogs">-</div><div class="stat-label">ERROR</div></div>
-                <div class="stat-card success"><div class="stat-value" id="metadataLogs">-</div><div class="stat-label">元数据</div></div>
-            </div>
-
-            <!-- 过滤器 -->
-            <div class="card">
-                <div class="card-title">筛选条件</div>
-                <div class="filter-row">
-                    <div class="filter-group"><label>级别</label><select id="filterLevel"><option value="">全部</option><option value="DEBUG">DEBUG</option><option value="INFO">INFO</option><option value="WARNING">WARNING</option><option value="ERROR">ERROR</option></select></div>
-                    <div class="filter-group"><label>类别</label><select id="filterCategory"><option value="">全部</option><option value="metadata">元数据</option><option value="download">下载</option><option value="telegram">Telegram</option><option value="general">常规</option></select></div>
-                    <div class="filter-group" style="flex:2;"><label>搜索关键词</label><input type="text" id="filterSearch" placeholder="搜索日志内容..."></div>
-                    <div class="filter-group" style="flex:0;"><label>&nbsp;</label><button class="btn btn-primary" onclick="applyFilter()" style="width:100%;">筛选</button></div>
-                    <div class="filter-group" style="flex:0;"><label>&nbsp;</label><button class="btn btn-secondary" onclick="resetFilter()" style="width:100%;">重置</button></div>
+            
+            <nav class="sidebar-nav">
+                <div class="nav-section">
+                    <div class="nav-section-title">主要功能</div>
+                    <a href="/" class="nav-item">
+                        <span class="nav-icon">📊</span>
+                        <span>仪表盘</span>
+                    </a>
+                    <a href="/settings" class="nav-item">
+                        <span class="nav-icon">⚙️</span>
+                        <span>系统设置</span>
+                    </a>
+                </div>
+                
+                <div class="nav-section">
+                    <div class="nav-section-title">数据管理</div>
+                    <a href="/history" class="nav-item">
+                        <span class="nav-icon">📜</span>
+                        <span>下载历史</span>
+                    </a>
+                    <a href="/playlists" class="nav-item">
+                        <span class="nav-icon">📀</span>
+                        <span>歌单订阅</span>
+                    </a>
+                </div>
+                
+                <div class="nav-section">
+                    <div class="nav-section-title">系统</div>
+                    <a href="/logs" class="nav-item active">
+                        <span class="nav-icon">📝</span>
+                        <span>系统日志</span>
+                    </a>
+                </div>
+            </nav>
+        </aside>
+        
+        <main class="main-content">
+            <header class="topbar">
+                <div class="topbar-title">📝 系统日志</div>
+                <div style="display: flex; gap: var(--space-3);">
+                    <button class="btn btn-ghost" onclick="clearLogs()">🗑️ 清空日志</button>
+                    <button class="btn btn-secondary" onclick="downloadLogs()">📥 下载日志</button>
+                    <button class="btn btn-primary" onclick="toggleAutoRefresh()" id="refreshBtn">🔄 自动刷新: 开</button>
+                </div>
+            </header>
+            
+            <div class="content-wrapper">
+                <!-- 筛选器 -->
+                <div class="card">
+                    <div class="card-body">
+                        <div class="filters">
+                            <select class="filter-input" id="levelFilter" onchange="filterLogs()">
+                                <option value="">全部级别</option>
+                                <option value="INFO">ℹ️ INFO</option>
+                                <option value="WARNING">⚠️ WARNING</option>
+                                <option value="ERROR">❌ ERROR</option>
+                                <option value="SUCCESS">✅ SUCCESS</option>
+                            </select>
+                            
+                            <input type="text" class="filter-input" placeholder="🔍 搜索关键词..." id="searchFilter" oninput="filterLogs()">
+                            
+                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-secondary);">
+                                <input type="checkbox" id="autoScroll" checked> 自动滚动
+                            </label>
+                            
+                            <span style="color: var(--text-tertiary); font-size: 0.85rem;">
+                                共 <span id="logCount">0</span> 条
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 日志显示 -->
+                <div class="card">
+                    <div class="card-body" style="padding: var(--space-4);">
+                        <div class="log-container" id="logContainer">
+                            <div style="text-align: center; padding: 48px; color: var(--gray-400);">
+                                <div style="font-size: 3rem; margin-bottom: 16px;">📝</div>
+                                <div>正在加载日志...</div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
-
-            <!-- 日志表格 -->
-            <div class="log-table-container">
-                <table class="log-table">
-                    <thead><tr><th style="width:150px;">时间</th><th style="width:75px;">级别</th><th style="width:90px;">类别</th><th>消息</th></tr></thead>
-                    <tbody id="logTableBody"><tr><td colspan="4"><div class="loading"><div class="spinner"></div><p>加载中...</p></div></td></tr></tbody>
-                </table>
-            </div>
-
-            <!-- 分页 -->
-            <div class="pagination">
-                <button id="prevPage" onclick="prevPage()">上一页</button>
-                <span class="page-info" id="pageInfo">第 1 页</span>
-                <button id="nextPage" onclick="nextPage()">下一页</button>
-            </div>
-        </div>
-    </main>
-</div>
-
-<!-- 导出模态框 -->
-<div class="modal" id="exportModal">
-    <div class="modal-content">
-        <div class="modal-header"><h3>📥 导出日志</h3><button class="modal-close" onclick="closeModal('exportModal')">×</button></div>
-        <div class="modal-body">
-            <p style="margin-bottom:14px;color:var(--text-secondary);font-size:0.85rem;">选择导出格式：</p>
-            <div class="export-options">
-                <label class="export-option selected" onclick="selectExportFormat('json')"><input type="radio" name="fmt" value="json" checked><span class="icon">📄</span><div class="info"><div class="title">JSON 格式</div><div class="desc">结构化数据，便于程序处理</div></div></label>
-                <label class="export-option" onclick="selectExportFormat('csv')"><input type="radio" name="fmt" value="csv"><span class="icon">📊</span><div class="info"><div class="title">CSV 格式</div><div class="desc">表格格式，可用 Excel 打开</div></div></label>
-                <label class="export-option" onclick="selectExportFormat('txt')"><input type="radio" name="fmt" value="txt"><span class="icon">📝</span><div class="info"><div class="title">TXT 格式</div><div class="desc">纯文本，便于阅读</div></div></label>
-            </div>
-        </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('exportModal')">取消</button><button class="btn btn-primary" onclick="doExport()">导出</button></div>
+        </main>
     </div>
-</div>
-
-<!-- 清理模态框 -->
-<div class="modal" id="clearModal">
-    <div class="modal-content">
-        <div class="modal-header"><h3>🗑️ 清理日志</h3><button class="modal-close" onclick="closeModal('clearModal')">×</button></div>
-        <div class="modal-body">
-            <p style="margin-bottom:14px;color:var(--text-secondary);font-size:0.85rem;">选择清理范围：</p>
-            <div class="filter-group" style="margin-bottom:12px;"><label>清理此日期之前的日志</label><input type="date" id="clearBeforeDate"></div>
-            <div class="filter-group"><label>指定类别（留空清理全部）</label><select id="clearCategory"><option value="">全部类别</option><option value="metadata">元数据</option><option value="download">下载</option><option value="telegram">Telegram</option><option value="general">常规</option></select></div>
-        </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('clearModal')">取消</button><button class="btn btn-danger" onclick="doClear()">清理</button></div>
-    </div>
-</div>
-
-<div class="toast" id="toast"></div>
-
-<script>
-let currentPage = 1, pageSize = 50, totalLogs = 0, selectedFormat = 'json';
-
-function showToast(msg, type='info') { const t=document.getElementById('toast'); t.textContent=msg; t.className=`toast ${type} show`; setTimeout(()=>t.classList.remove('show'),3000); }
-function toggleSidebar(open) { const sb=document.getElementById('sidebar'),bd=document.getElementById('backdrop'); const w=open===undefined?!sb.classList.contains('open'):open; sb.classList.toggle('open',w); bd.classList.toggle('show',w); }
-async function fetchWithAuth(url,o={}){const r=await fetch(url,o);if(r.status===401){location.href='/login';throw'未登录'}return r}
-
-async function loadStats() {
-    try { const r=await fetchWithAuth('/api/logs/stats'); const d=await r.json(); if(d.success){const s=d.data; document.getElementById('totalLogs').textContent=s.total||0; document.getElementById('infoLogs').textContent=s.by_level?.INFO||0; document.getElementById('warningLogs').textContent=s.by_level?.WARNING||0; document.getElementById('errorLogs').textContent=s.by_level?.ERROR||0; document.getElementById('metadataLogs').textContent=s.metadata_count||0;} } catch(e){console.error(e)}
-}
-
-async function loadLogs() {
-    const tb=document.getElementById('logTableBody');
-    tb.innerHTML='<tr><td colspan="4"><div class="loading"><div class="spinner"></div><p>加载中...</p></div></td></tr>';
-    try{
-        const lv=document.getElementById('filterLevel').value, cat=document.getElementById('filterCategory').value, srch=document.getElementById('filterSearch').value;
-        const p=new URLSearchParams({limit:pageSize,offset:(currentPage-1)*pageSize});
-        if(lv)p.append('level',lv);if(cat)p.append('category',cat);if(srch)p.append('search',srch);
-        const r=await fetchWithAuth(`/api/logs?${p}`), d=await r.json();
-        if(d.success){totalLogs=d.data.total;renderLogs(d.data.logs);updatePagination();} else tb.innerHTML=`<tr><td colspan="4"><div class="empty-state"><div class="icon">❌</div><h3>加载失败</h3></div></td></tr>`;
-    } catch(e){console.error(e);tb.innerHTML=`<tr><td colspan="4"><div class="empty-state"><div class="icon">❌</div><h3>加载失败</h3></div></td></tr>`;}
-}
-
-function renderLogs(logs){
-    const tb=document.getElementById('logTableBody');
-    if(!logs?.length){tb.innerHTML=`<tr><td colspan="4"><div class="empty-state"><div class="icon">📭</div><h3>暂无日志</h3><p>系统运行时会产生日志记录</p></div></td></tr>`;return}
-    tb.innerHTML=logs.map(log=>`<tr><td class="log-time">${formatTime(log.timestamp)}</td><td><span class="log-level ${log.level}">${log.level}</span></td><td><span class="log-category ${log.category||''}">${log.category||'general'}</span></td><td class="log-message">${escHtml(log.message)}</td></tr>`).join('');
-}
-function formatTime(ts){if(!ts)return'-';return new Date(ts).toLocaleString('zh-CN')}
-function escHtml(t){if(!t)return '';const d=document.createElement('div');d.textContent=t;return d.innerHTML}
-function updatePagination(){const tp=Math.ceil(totalLogs/pageSize)||1;document.getElementById('pageInfo').textContent=`第 ${currentPage}/${tp} 页 (共${totalLogs}条)`;document.getElementById('prevPage').disabled=currentPage<=1;document.getElementById('nextPage').disabled=currentPage>=tp}
-function prevPage(){if(currentPage>1){currentPage--;loadLogs()}}
-function nextPage(){if(currentPage<Math.ceil(totalLogs/pageSize)){currentPage++;loadLogs()}}
-function applyFilter(){currentPage=1;loadLogs()}
-function resetFilter(){document.getElementById('filterLevel').value='';document.getElementById('filterCategory').value='';document.getElementById('filterSearch').value='';currentPage=1;loadLogs()}
-
-function showExportModal(){document.getElementById('exportModal').classList.add('show')}
-function selectExportFormat(f){selectedFormat=f;document.querySelectorAll('.export-option').forEach(e=>e.classList.remove('selected'));event.currentTarget.classList.add('selected')}
-function doExport(){
-    const lv=document.getElementById('filterLevel').value,cat=document.getElementById('filterCategory').value,p=new URLSearchParams({format:selectedFormat});
-    if(lv)p.append('level',lv);if(cat)p.append('category',cat);
-    location.href=`/api/logs/export?${p}`;closeModal('exportModal');showToast('开始导出','success')
-}
-function exportMetadataLogs(){location.href='/api/logs/export?format=json&category=metadata';showToast('导出元数据日志','success')}
-function showClearModal(){document.getElementById('clearModal').classList.add('show')}
-async function doClear(){
-    const date=document.getElementById('clearBeforeDate').value,cat=document.getElementById('clearCategory').value;
-    if(!date&&!cat){if(!confirm('确定清理所有日志？不可撤销！'))return}
-    try{const r=await fetchWithAuth('/api/logs/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({before_date:date||null,category:cat||null})});const d=await r.json();d.success?(showToast(d.message,'success'),closeModal('clearModal'),loadLogs(),loadStats()):showToast(d.error||'失败','error')}catch(e){showToast('失败','error')}
-}
-function closeModal(id){document.getElementById(id).classList.remove('show')}
-document.getElementById('filterSearch').addEventListener('keypress',e=>{if(e.key==='Enter')applyFilter()});
-document.addEventListener('DOMContentLoaded',()=>{loadStats();loadLogs()});
-</script>
+    
+    <script>
+        let allLogs = [];
+        let filteredLogs = [];
+        let autoRefresh = true;
+        let refreshInterval;
+        
+        // 加载日志
+        async function loadLogs() {
+            try {
+                const response = await fetch('/api/logs?limit=500');
+                const result = await response.json();
+                
+                if (result.success) {
+                    allLogs = result.data;
+                    filterLogs();
+                }
+            } catch (error) {
+                console.error('加载日志失败:', error);
+            }
+        }
+        
+        // 筛选日志
+        function filterLogs() {
+            const level = document.getElementById('levelFilter').value;
+            const search = document.getElementById('searchFilter').value.toLowerCase();
+            
+            filteredLogs = allLogs.filter(log => {
+                if (level && log.level !== level) return false;
+                if (search && !log.message.toLowerCase().includes(search)) return false;
+                return true;
+            });
+            
+            renderLogs();
+        }
+        
+        // 渲染日志
+        function renderLogs() {
+            const container = document.getElementById('logContainer');
+            
+            if (filteredLogs.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 48px; color: var(--gray-400);">
+                        <div style="font-size: 3rem; margin-bottom: 16px;">📝</div>
+                        <div>暂无日志记录</div>
+                    </div>
+                `;
+            } else {
+                container.innerHTML = '';
+                
+                filteredLogs.forEach(log => {
+                    const line = document.createElement('div');
+                    line.className = 'log-line';
+                    line.innerHTML = `
+                        <span class="log-time">${formatTime(log.timestamp)}</span>
+                        <span class="log-level ${log.level.toLowerCase()}">${log.level}</span>
+                        <span class="log-message">${escapeHtml(log.message)}</span>
+                    `;
+                    container.appendChild(line);
+                });
+                
+                // 自动滚动到底部
+                if (document.getElementById('autoScroll').checked) {
+                    container.scrollTop = container.scrollHeight;
+                }
+            }
+            
+            document.getElementById('logCount').textContent = filteredLogs.length;
+        }
+        
+        // 格式化时间
+        function formatTime(timestamp) {
+            const date = new Date(timestamp);
+            return date.toLocaleTimeString('zh-CN', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+        }
+        
+        // 转义 HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        // 清空日志
+        async function clearLogs() {
+            if (!confirm('确定要清空所有日志吗？')) return;
+            
+            try {
+                const response = await fetch('/api/logs/clear', {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    allLogs = [];
+                    filterLogs();
+                    showToast('✅ 日志已清空', 'success');
+                }
+            } catch (error) {
+                showToast('❌ 清空失败', 'error');
+            }
+        }
+        
+        // 下载日志
+        function downloadLogs() {
+            const text = filteredLogs.map(log => 
+                `[${formatTime(log.timestamp)}] [${log.level}] ${log.message}`
+            ).join('\n');
+            
+            const blob = new Blob([text], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `music-bot-logs-${new Date().toISOString().slice(0,10)}.txt`;
+            a.click();
+        }
+        
+        // 切换自动刷新
+        function toggleAutoRefresh() {
+            autoRefresh = !autoRefresh;
+            const btn = document.getElementById('refreshBtn');
+            
+            if (autoRefresh) {
+                btn.textContent = '🔄 自动刷新: 开';
+                btn.style.background = 'var(--primary)';
+                startAutoRefresh();
+            } else {
+                btn.textContent = '🔄 自动刷新: 关';
+                btn.style.background = 'var(--gray-100)';
+                clearInterval(refreshInterval);
+            }
+        }
+        
+        // 开始自动刷新
+        function startAutoRefresh() {
+            clearInterval(refreshInterval);
+            refreshInterval = setInterval(loadLogs, 3000);  // 每 3 秒刷新
+        }
+        
+        // Toast 通知
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.style.cssText = `
+                position: fixed; top: 20px; right: 20px;
+                padding: 16px 24px;
+                background: ${type === 'success' ? '#10b981' : '#ef4444'};
+                color: white; border-radius: 10px;
+                box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+                z-index: 1000;
+                animation: slideIn 0.3s ease-out;
+            `;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.animation = 'slideOut 0.3s ease-out';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+        
+        // 页面加载
+        document.addEventListener('DOMContentLoaded', () => {
+            loadLogs();
+            startAutoRefresh();
+        });
+    </script>
 </body>
 </html>

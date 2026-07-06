@@ -205,6 +205,50 @@ def api_auth_status():
     })
 
 
+# ==================== 页面路由 ====================
+
+@app.route('/')
+@login_required
+def index():
+    """仪表盘页面"""
+    return render_template('index_new.html')
+
+
+@app.route('/settings')
+@login_required
+def settings():
+    """系统设置页面"""
+    return render_template('settings.html')
+
+
+@app.route('/history')
+@login_required
+def history():
+    """下载历史页面"""
+    return render_template('history.html')
+
+
+@app.route('/playlists')
+@login_required
+def playlists():
+    """歌单订阅页面"""
+    return render_template('playlists.html')
+
+
+@app.route('/logs')
+@login_required
+def logs():
+    """系统日志页面"""
+    return render_template('logs.html')
+
+
+@app.route('/account')
+@login_required
+def account():
+    """账号管理页面"""
+    return render_template('account.html')
+
+
 @app.route('/api/auth/change-password', methods=['POST'])
 @login_required
 def api_change_password():

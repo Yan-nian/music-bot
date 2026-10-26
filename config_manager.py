@@ -13,7 +13,9 @@ SQLite 配置管理器 - 增强版
 import sqlite3
 import json
 import os
+import time
 import logging
+import threading
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
@@ -25,6 +27,43 @@ from config.log_manager import LogManager
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_default_db_path() -> str:
+    """决定默认数据库位置。
+
+    老的默认值是写死的 `/app/db/music_bot.db`（Docker 镜像里的路径）。
+    在 Windows / macOS 上直接跑源码时，`/app/db` 会被解释成 `C:\\app\\db`
+    （或根目录下新建 `/app`），数据库就落在一个既意外又难找的地方，
+    而且和 `--db-path` 指定的库不是同一个，表现为「配置改了没生效」。
+
+    现在的规则：
+    1. `MUSIC_BOT_DB_PATH` 环境变量优先；
+    2. 容器内（存在 `/.dockerenv`）沿用 `/app/db/music_bot.db`，兼容老部署的 volume 挂载；
+    3. 本地跑源码时放到代码目录下的 `db/music_bot.db`；
+    4. 如果新位置还没有库、但老位置的库存在，就继续用老的，
+       免得升级后用户发现「配置和下载记录全没了」。
+    """
+    env_path = os.environ.get('MUSIC_BOT_DB_PATH')
+    if env_path:
+        return env_path
+
+    in_docker = os.path.exists('/.dockerenv') or (
+        os.name != 'nt' and os.path.isdir('/app/db')
+    )
+    if in_docker:
+        return '/app/db/music_bot.db'
+
+    local_default = Path(__file__).resolve().parent / 'db' / 'music_bot.db'
+    legacy = Path('/app/db/music_bot.db')
+    try:
+        if not local_default.exists() and legacy.exists():
+            return str(legacy)
+    except OSError:
+        pass
+    return str(local_default)
+
+
+DEFAULT_DB_PATH = _resolve_default_db_path()
 
 class ConfigManager(PlaylistManager, HistoryManager, LogManager):
     """配置管理器 - 使用 SQLite 存储配置
@@ -73,6 +112,11 @@ class ConfigManager(PlaylistManager, HistoryManager, LogManager):
         "netease_album_folder_format": "{AlbumName}({ReleaseDate})",
         "netease_song_file_format": "{SongName}",
         "netease_cookies": "",
+        # 登录态 / Cookie 自动维护
+        "netease_auto_refresh_enabled": True,
+        "netease_cookie_check_interval": 1800,
+        "netease_cookie_notify_on_expire": True,
+        "netease_cookie_meta": {},
         
         # Apple Music 配置
         "apple_music_enabled": True,
@@ -101,18 +145,19 @@ class ConfigManager(PlaylistManager, HistoryManager, LogManager):
         "download_max_concurrent": 3,
         "download_max_retries": 3,
         "download_retry_delay_base": 2.0,
-        "download_timeout": 600,
+        "download_timeout": 1800,
+        "handler_timeout": 60,
     }
     
-    def __init__(self, db_path: str = "/app/db/music_bot.db"):
+    def __init__(self, db_path: str = None):
         """
         初始化配置管理器
-        
+
         Args:
-            db_path: SQLite 数据库文件路径
+            db_path: SQLite 数据库文件路径；为空时使用默认路径（见 DEFAULT_DB_PATH）
         """
-        self.db_path = Path(db_path)
-        
+        self.db_path = Path(db_path or DEFAULT_DB_PATH)
+
         # 确保数据库目录存在
         try:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,10 +165,53 @@ class ConfigManager(PlaylistManager, HistoryManager, LogManager):
             logger.warning(f"无法创建数据库目录 {self.db_path.parent}: {e}")
             # 回退到当前目录
             self.db_path = Path("./music_bot.db")
+
+        # 统一成绝对路径，避免不同进程 CWD 不同导致指向两个库
+        try:
+            self.db_path = self.db_path.resolve()
+        except OSError:
+            pass
         
+        self._cache: Dict[str, Any] = {}
+        self._cache_at: float = 0.0
+        self._cache_ttl: float = 3.0
+        self._cache_lock = threading.RLock()
+
         # 初始化数据库
         self._init_database()
-    
+
+    def _refresh_cache(self, force: bool = False) -> None:
+        """把 config 表整体读进内存。
+
+        读取配置是热路径（每条消息、每次下载都会调），原来每次都要新开
+        一个 SQLite 连接 + 3 条 PRAGMA，开销远大于数据本身。这里按 TTL
+        做整体刷新：同一个进程内直接命中内存；跨进程（--web-only 与
+        --bot-only 分开跑）时最多 stale 一个 TTL 周期。
+        """
+        now = time.time()
+        with self._cache_lock:
+            if not force and self._cache and (now - self._cache_at) < self._cache_ttl:
+                return
+            try:
+                with self._connect() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT key, value FROM config")
+                    data: Dict[str, Any] = {}
+                    for key, value in cursor.fetchall():
+                        try:
+                            data[key] = json.loads(value)
+                        except (TypeError, json.JSONDecodeError):
+                            data[key] = value
+                self._cache = data
+                self._cache_at = now
+            except Exception as e:
+                logger.error(f"❌ 加载配置缓存失败: {e}")
+
+    def invalidate_cache(self) -> None:
+        """使缓存立即失效（写入配置后调用）"""
+        with self._cache_lock:
+            self._cache_at = 0.0
+
     def _connect(self):
         """统一数据库连接：开启 WAL、设置忙等待与同步策略
         """
@@ -335,23 +423,26 @@ class ConfigManager(PlaylistManager, HistoryManager, LogManager):
             )
     
     def get_config(self, key: str, default: Any = None) -> Any:
-        """获取配置值"""
+        """获取配置值（优先读内存缓存）"""
         try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT value, value_type FROM config WHERE key = ?", (key,))
-                row = cursor.fetchone()
-                
-                if row:
-                    value, value_type = row
-                    return json.loads(value)
-                
-                return default if default is not None else self.DEFAULT_CONFIG.get(key)
-                
+            self._refresh_cache()
+            with self._cache_lock:
+                if key in self._cache:
+                    return self._cache[key]
+            return default if default is not None else self.DEFAULT_CONFIG.get(key)
         except Exception as e:
             logger.error(f"❌ 获取配置失败 [{key}]: {e}")
             return default if default is not None else self.DEFAULT_CONFIG.get(key)
-    
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """dict 风格别名。
+
+        早期下载器（如 apple_music.py）按 `config_manager.get(key, default)`
+        调用，而 ConfigManager 只有 get_config，导致 __init__ 里直接抛
+        AttributeError 被上层吞掉，Apple Music 下载器因此从未初始化成功。
+        """
+        return self.get_config(key, default)
+
     def set_config(self, key: str, value: Any) -> bool:
         """设置配置值"""
         try:
@@ -366,29 +457,23 @@ class ConfigManager(PlaylistManager, HistoryManager, LogManager):
                 
                 conn.commit()
                 logger.info(f"✅ 配置已更新: {key}")
-                return True
+            with self._cache_lock:
+                self._cache[key] = value
+            return True
                 
         except Exception as e:
             logger.error(f"❌ 设置配置失败 [{key}]: {e}")
+            self.invalidate_cache()
             return False
     
     def get_all_config(self) -> Dict[str, Any]:
-        """获取所有配置"""
+        """获取所有配置（优先读内存缓存）"""
         try:
-            with self._connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT key, value FROM config")
-                rows = cursor.fetchall()
-                
-                config = {}
-                for key, value in rows:
-                    try:
-                        config[key] = json.loads(value)
-                    except json.JSONDecodeError:
-                        config[key] = value
-                
-                return config
-                
+            self._refresh_cache()
+            with self._cache_lock:
+                if self._cache:
+                    return dict(self._cache)
+            return self.DEFAULT_CONFIG.copy()
         except Exception as e:
             logger.error(f"❌ 获取所有配置失败: {e}")
             return self.DEFAULT_CONFIG.copy()
@@ -411,7 +496,8 @@ class ConfigManager(PlaylistManager, HistoryManager, LogManager):
                 
                 conn.commit()
                 logger.info(f"✅ 批量更新配置成功: {len(config_dict)} 项")
-                return True
+            self.invalidate_cache()
+            return True
                 
         except Exception as e:
             logger.error(f"❌ 批量更新配置失败: {e}")
@@ -426,7 +512,8 @@ class ConfigManager(PlaylistManager, HistoryManager, LogManager):
                 self._insert_default_config(cursor)
                 conn.commit()
                 logger.info("✅ 配置已重置为默认值")
-                return True
+            self.invalidate_cache()
+            return True
                 
         except Exception as e:
             logger.error(f"❌ 重置配置失败: {e}")
@@ -458,11 +545,33 @@ _config_manager: Optional[ConfigManager] = None
 
 
 def get_config_manager(db_path: str = None) -> ConfigManager:
-    """获取配置管理器单例"""
+    """获取配置管理器单例。
+
+    注意：单例一旦建立，后续再传一个**不同**的 db_path 会被忽略——这正是
+    `--db-path` 曾经完全失效的原因（先有人用默认路径建了实例，Web 再传
+    自定义路径时被静默丢弃，于是 Web 读写的是另一个库，表现为「配置改了
+    却不生效」「下载记录看不到」）。这里显式检测路径变化并重建单例。
+    """
     global _config_manager
     if _config_manager is None:
-        if db_path:
+        _config_manager = ConfigManager(db_path) if db_path else ConfigManager()
+        return _config_manager
+
+    if db_path:
+        try:
+            want = Path(db_path).resolve()
+        except OSError:
+            want = Path(db_path)
+        if _config_manager.db_path != want:
+            logger.warning(
+                "配置管理器数据库路径变化：%s -> %s，重建单例",
+                _config_manager.db_path, want,
+            )
             _config_manager = ConfigManager(db_path)
-        else:
-            _config_manager = ConfigManager()
     return _config_manager
+
+
+def reset_config_manager() -> None:
+    """丢弃单例（测试 / 重新初始化时用）。"""
+    global _config_manager
+    _config_manager = None

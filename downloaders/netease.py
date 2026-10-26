@@ -10,11 +10,13 @@ import re
 import json
 import time
 import logging
+import threading
 import requests
 from pathlib import Path
 from typing import Optional, Dict, List, Any, Callable
 
 from .base import BaseDownloader
+from .netease_auth import NeteaseAuth, parse_cookie_string
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +71,14 @@ class NeteaseDownloader(BaseDownloader):
         super().__init__(config_manager)
         
         self.session = requests.Session()
+        self._session_lock = threading.RLock()
+        self._tls = threading.local()
+        self._cookie_version = 0
+        self.auth = NeteaseAuth(config_manager)
+
+        # 登录态（由 _check_login_status 填充）
+        self.logged_in = False
+        self.user_info = None
         
         # 网易云音乐官方 API 配置
         self.api_url = "https://music.163.com"
@@ -117,8 +127,40 @@ class NeteaseDownloader(BaseDownloader):
         
         logger.info(f"📝 网易云配置: 音质={self.quality}, 歌词={self.download_lyrics}")
 
+    def _get_session(self) -> requests.Session:
+        """取当前线程专属的 Session。
+
+        requests.Session 不是线程安全的，而下载任务跑在 to_thread 线程池里，
+        多个任务共用一个 Session 会出现 cookie jar 竞争。这里按线程各建一个，
+        用 cookie 版本号保证主 Session 更新 cookie 后各线程能同步过来。
+        """
+        session = getattr(self._tls, 'session', None)
+        version = getattr(self._tls, 'version', None)
+        if session is None or version != self._cookie_version:
+            if session is None:
+                session = requests.Session()
+                session.headers.update(self.session.headers)
+            with self._session_lock:
+                session.cookies.clear()
+                session.cookies.update(self.session.cookies)
+            self._tls.session = session
+            self._tls.version = self._cookie_version
+        return session
+
+    def reload_config(self):
+        """配置热重载。
+
+        旧实现没有这个方法（BaseDownloader 里是空实现），所以 Web 上改完
+        cookie 必须重启容器才生效——commit 2f81d80 只给 apple_music 加了，
+        网易云这边一直是靠重启的。
+        """
+        self._load_config()
+        self._load_cookies()
+        self._check_login_status()
+        logger.info("🔄 网易云下载器配置已重载")
+
     def _load_cookies(self):
-        """加载 cookies"""
+        """加载 cookies（配置 > 环境变量 > 文件）"""
         # 优先从配置获取
         cookies_str = self.get_config('netease_cookies', '')
         
@@ -153,58 +195,68 @@ class NeteaseDownloader(BaseDownloader):
         logger.warning("⚠️ 未配置网易云 cookies，部分功能可能受限")
     
     def _parse_cookies(self, cookies_str: str):
-        """解析 cookies 字符串"""
+        """解析 cookies 字符串并写入 session（线程安全，覆盖旧值）"""
         try:
-            if cookies_str.startswith('{'):
-                # JSON 格式
-                cookies_dict = json.loads(cookies_str)
+            cookies_dict = parse_cookie_string(cookies_str)
+
+            with self._session_lock:
+                # 清掉上一次加载的，避免新旧 cookie 混在一起导致 301
+                self.session.cookies.clear()
+                self.session.cookies.set('os', 'pc', domain='.music.163.com')
+                self.session.cookies.set('appver', '8.9.70', domain='.music.163.com')
                 for name, value in cookies_dict.items():
                     self.session.cookies.set(name, str(value), domain='.music.163.com')
-            else:
-                # 字符串格式: name=value; name2=value2
-                for cookie in cookies_str.split(';'):
-                    if '=' in cookie:
-                        name, value = cookie.strip().split('=', 1)
-                        self.session.cookies.set(name.strip(), value.strip(), domain='.music.163.com')
-            
-            # 检查关键 cookie 是否存在
-            cookie_names = [c.name for c in self.session.cookies]
+
+                # cookie 真的变了才让各线程重建 Session、并强制复核登录态；
+                # 否则每次下载前的 reload_config 都会白发一次网络请求
+                new_hash = hash(tuple(sorted(cookies_dict.items())))
+                if new_hash != getattr(self, '_cookie_hash', None):
+                    self._cookie_hash = new_hash
+                    self._cookie_version += 1
+                    self._login_checked_at = 0
+
+            cookie_names = list(cookies_dict.keys())
             has_music_u = 'MUSIC_U' in cookie_names
-            logger.info(f"✅ 已加载 {len(self.session.cookies)} 个 cookies (MUSIC_U: {'有' if has_music_u else '无'})")
+            logger.info(f"✅ 已加载 {len(cookie_names)} 个 cookies (MUSIC_U: {'有' if has_music_u else '无'})")
             if not has_music_u:
                 logger.warning("⚠️ 缺少关键 cookie MUSIC_U，可能无法下载付费/VIP 歌曲")
         except Exception as e:
             logger.error(f"❌ 解析 cookies 失败: {e}")
-    
-    def _check_login_status(self):
-        """检查登录状态和 cookies 有效性"""
+
+    def _check_login_status(self, force: bool = False) -> bool:
+        """检查登录状态。
+
+        旧实现请求 /api/login/status，该接口已下线（实测固定 404），所以
+        logged_in 永远 False。改用 /api/nuser/account/get，并加 5 分钟缓存，
+        避免每个 Web 请求都打一次网络。
+        """
+        now = time.time()
+        if not force and getattr(self, '_login_checked_at', 0) and now - self._login_checked_at < 300:
+            return self.logged_in
+
+        self._login_checked_at = now
         try:
-            url = f"{self.api_url}/api/login/status"
-            response = self.session.get(url, timeout=10)
-            data = response.json()
-            
-            if data.get('code') == 200:
-                profile = data.get('profile')
-                if profile:
-                    nickname = profile.get('nickname', '未知')
-                    vip_type = profile.get('vipType', 0)
-                    vip_str = '黑胶VIP' if vip_type == 11 else ('普通VIP' if vip_type > 0 else '普通用户')
-                    logger.info(f"✅ 网易云登录状态有效: {nickname} ({vip_str})")
-                    self.logged_in = True
-                    self.user_info = profile
-                    return True
-                else:
-                    logger.warning("⚠️ 网易云 cookies 已失效，需要重新登录获取 cookies")
-                    self.logged_in = False
-                    self.user_info = None
+            cookie_str = self.get_config('netease_cookies', '') or ''
+            if not cookie_str:
+                # 会话里可能已经从文件/环境变量拿到了 cookie
+                cookie_str = '; '.join(f'{c.name}={c.value}' for c in self.session.cookies)
+
+            info = self.auth.check(cookie_str)
+            if info.get('logged_in'):
+                self.logged_in = True
+                self.user_info = info
+                logger.info(f"✅ 网易云登录状态有效: {info.get('nickname')} ({info.get('vip_label')})")
+                return True
+
+            self.logged_in = False
+            self.user_info = None
+            if info.get('has_music_u'):
+                logger.warning("⚠️ 网易云 MUSIC_U 已失效，需要重新登录（Web 账号页可扫码）")
             else:
-                logger.warning(f"⚠️ 检查登录状态失败: {data.get('msg', '未知错误')}")
-                self.logged_in = False
-                
+                logger.info("ℹ️ 网易云未登录，仅能下载免费曲目")
         except Exception as e:
             logger.debug(f"检查登录状态时出错: {e}")
             self.logged_in = False
-        
         return False
 
     # ============ URL 解析 ============
@@ -243,7 +295,7 @@ class NeteaseDownloader(BaseDownloader):
         try:
             logger.info(f"🔗 解析短链接: {short_url}")
             
-            response = self.session.get(short_url, allow_redirects=True, timeout=10)
+            response = self._get_session().get(short_url, allow_redirects=True, timeout=10)
             final_url = response.url
             
             logger.info(f"🔗 重定向到: {final_url}")
@@ -292,7 +344,7 @@ class NeteaseDownloader(BaseDownloader):
             
             logger.info(f"🔍 搜索歌曲: {keyword}")
             
-            response = self.session.get(url, params=params, timeout=15)
+            response = self._get_session().get(url, params=params, timeout=15)
             response.raise_for_status()
             data = response.json()
             
@@ -324,7 +376,7 @@ class NeteaseDownloader(BaseDownloader):
             url = f"{self.api_url}/api/song/detail"
             params = {'ids': f'[{song_id}]'}
             
-            response = self.session.get(url, params=params, timeout=15)
+            response = self._get_session().get(url, params=params, timeout=15)
             response.raise_for_status()
             data = response.json()
             
@@ -371,7 +423,7 @@ class NeteaseDownloader(BaseDownloader):
                 
                 logger.info(f"📝 批量获取歌曲详情: {len(batch_ids)} 首 (批次 {i // batch_size + 1})")
                 
-                response = self.session.get(url, params=params, timeout=30)
+                response = self._get_session().get(url, params=params, timeout=30)
                 response.raise_for_status()
                 data = response.json()
                 
@@ -415,7 +467,7 @@ class NeteaseDownloader(BaseDownloader):
         """
         try:
             url = f"{self.api_url}/api/album/{album_id}"
-            response = self.session.get(url, timeout=15)
+            response = self._get_session().get(url, timeout=15)
             response.raise_for_status()
             data = response.json()
             
@@ -463,7 +515,7 @@ class NeteaseDownloader(BaseDownloader):
             
             logger.info(f"🔗 请求音乐链接: {song_id} (音质参数: {br})")
             
-            response = self.session.get(url, params=params, timeout=15)
+            response = self._get_session().get(url, params=params, timeout=15)
             response.raise_for_status()
             data = response.json()
             
@@ -552,7 +604,7 @@ class NeteaseDownloader(BaseDownloader):
                 'rv': 1,
             }
             
-            response = self.session.get(url, params=params, timeout=15)
+            response = self._get_session().get(url, params=params, timeout=15)
             response.raise_for_status()
             data = response.json()
             
@@ -579,7 +631,7 @@ class NeteaseDownloader(BaseDownloader):
             url = f"{self.api_url}/api/album/{album_id}"
             logger.info(f"💿 获取专辑歌曲: {url}")
             
-            response = self.session.get(url, timeout=15)
+            response = self._get_session().get(url, timeout=15)
             response.raise_for_status()
             data = response.json()
             
@@ -662,7 +714,7 @@ class NeteaseDownloader(BaseDownloader):
                 'csrf_token': ''
             }
             
-            response = self.session.get(url, params=params, timeout=30)
+            response = self._get_session().get(url, params=params, timeout=30)
             response.raise_for_status()
             data = response.json()
             
@@ -795,7 +847,7 @@ class NeteaseDownloader(BaseDownloader):
                 'csrf_token': ''
             }
             
-            response = self.session.get(url, params=params, timeout=15)
+            response = self._get_session().get(url, params=params, timeout=15)
             response.raise_for_status()
             data = response.json()
             
@@ -870,7 +922,7 @@ class NeteaseDownloader(BaseDownloader):
                 'csrf_token': ''
             }
             
-            response = self.session.post(url, data=data, timeout=30)
+            response = self._get_session().post(url, data=data, timeout=30)
             response.raise_for_status()
             result = response.json()
             
@@ -918,28 +970,37 @@ class NeteaseDownloader(BaseDownloader):
             # 获取下载链接（支持降级）
             song_url_info = self.get_song_url_with_fallback(song_id, quality)
             if not song_url_info or not song_url_info.get('url'):
-                return {'success': False, 'error': '无法获取下载链接，可能需要 VIP 或配置 cookies'}
-            
+                return {
+                    'success': False,
+                    'error': '无法获取下载链接，可能需要 VIP 或配置 cookies',
+                    'retryable': False,
+                }
+
             # 构建文件名和目录
             filename = self._build_filename(song_info, song_url_info.get('type', 'mp3'))
             save_dir = self._build_directory(download_dir, song_info)
             self.ensure_dir(save_dir)
             filepath = os.path.join(save_dir, filename)
-            
-            # 检查是否已存在
+
+            # 检查是否已存在（旧实现只看 exists，一个 0 字节残文件也算"已下载"）
             if os.path.exists(filepath):
                 file_size = os.path.getsize(filepath)
-                logger.info(f"📁 文件已存在: {filename}")
-                
-                return {
-                    'success': True,
-                    'song_title': song_info['name'],
-                    'song_artist': song_info['artist'],
-                    'filepath': filepath,
-                    'size_mb': file_size / (1024 * 1024),
-                    'message': '文件已存在',
-                }
-            
+                if file_size > 1024:
+                    logger.info(f"📁 文件已存在: {filename}")
+                    return {
+                        'success': True,
+                        'song_title': song_info['name'],
+                        'song_artist': song_info['artist'],
+                        'filepath': filepath,
+                        'size_mb': file_size / (1024 * 1024),
+                        'message': '文件已存在',
+                    }
+                logger.warning(f"⚠️ 发现残缺文件（{file_size} 字节），重新下载: {filename}")
+                try:
+                    os.remove(filepath)
+                except OSError:
+                    pass
+
             if progress_callback:
                 progress_callback({
                     'status': 'downloading',
@@ -1008,7 +1069,6 @@ class NeteaseDownloader(BaseDownloader):
         except Exception as e:
             logger.error(f"❌ 下载歌曲失败: {e}")
             return {'success': False, 'error': str(e)}
-    
     def download_album(self, album_id: str, download_dir: str,
                       quality: str = None,
                       progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
@@ -1843,50 +1903,91 @@ class NeteaseDownloader(BaseDownloader):
     
     def _download_file(self, url: str, filepath: str,
                       progress_callback: Optional[Callable] = None,
-                      display_name: str = None) -> bool:
-        """下载文件"""
-        try:
-            response = self.session.get(url, stream=True, timeout=300)
-            response.raise_for_status()
-            
-            total_size = int(response.headers.get('content-length', 0))
-            downloaded = 0
-            start_time = time.time()
-            
-            # 确保目录存在
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
-            
-            # 用于显示的文件名
-            filename = display_name or os.path.basename(filepath)
-            
-            with open(filepath, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
+                      display_name: str = None,
+                      max_retries: int = 2) -> bool:
+        """下载文件（断点续传 + 原子落盘 + 大小校验）
+
+        旧实现直接 open(filepath, 'wb')，CDN 半路断开会留下残缺文件；而
+        download_song 又用 os.path.exists 判断"已下载"，坏文件就被永久跳过。
+        现在写 .part，校验 content-length 后 os.replace 原子落盘，失败自动重试。
+        """
+        os.makedirs(os.path.dirname(filepath) or '.', exist_ok=True)
+        tmp_path = filepath + '.part'
+        filename = display_name or os.path.basename(filepath)
+
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                resumed = os.path.getsize(tmp_path) if os.path.exists(tmp_path) else 0
+                headers = {'Range': f'bytes={resumed}-'} if resumed > 0 else {}
+
+                session = self._get_session()
+                response = session.get(url, stream=True, timeout=(15, 300), headers=headers)
+
+                # 服务端不支持 Range（返回 200 而非 206）时只能从头来
+                if resumed and response.status_code != 206:
+                    response.close()
+                    resumed = 0
+                    response = session.get(url, stream=True, timeout=(15, 300))
+
+                response.raise_for_status()
+
+                chunk_size = 256 * 1024
+                content_length = int(response.headers.get('content-length', 0) or 0)
+                total_size = content_length + resumed if content_length else 0
+                downloaded = resumed
+                start_time = time.time()
+                last_report = 0.0
+
+                mode = 'ab' if resumed else 'wb'
+                with open(tmp_path, mode) as f:
+                    for chunk in response.iter_content(chunk_size=chunk_size):
+                        if not chunk:
+                            continue
                         f.write(chunk)
                         downloaded += len(chunk)
-                        
-                        if progress_callback and total_size > 0:
-                            progress = (downloaded / total_size) * 100
-                            elapsed = time.time() - start_time
-                            speed = downloaded / elapsed if elapsed > 0 else 0
-                            eta = (total_size - downloaded) / speed if speed > 0 else 0
-                            
+
+                        # 限流回调：30ms 一次足够刷 UI，避免每 256KB 都跨线程调度
+                        now = time.time()
+                        if progress_callback and total_size > 0 and (now - last_report) > 0.03:
+                            last_report = now
+                            elapsed = now - start_time or 1e-6
+                            speed = (downloaded - resumed) / elapsed
+                            remaining = max(0, total_size - downloaded)
                             progress_callback({
                                 'status': 'file_progress',
-                                'percent': progress,
+                                'percent': min(100.0, downloaded / total_size * 100),
                                 'downloaded': downloaded,
                                 'total': total_size,
                                 'speed': speed,
-                                'eta': eta,
+                                'eta': remaining / speed if speed > 0 else 0,
                                 'filename': filename,
                             })
-            
-            logger.info(f"✅ 下载完成: {filepath}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ 下载文件失败: {e}")
-            return False
+
+                actual = os.path.getsize(tmp_path)
+                if total_size and actual < total_size:
+                    raise IOError(f'文件不完整: {actual}/{total_size} 字节')
+
+                os.replace(tmp_path, filepath)
+                logger.info(f"✅ 下载完成: {filepath} ({self.format_size(actual)})")
+                return True
+
+            except Exception as e:
+                last_error = e
+                # 4xx 是链接失效，重试无意义
+                status = getattr(getattr(e, 'response', None), 'status_code', None)
+                if status and 400 <= status < 500:
+                    logger.error(f"❌ 下载文件失败（{status}，不重试）: {e}")
+                    break
+                if attempt < max_retries:
+                    delay = 1.5 * (attempt + 1)
+                    logger.warning(f"⚠️ 下载中断，{delay:.1f}s 后重试（保留断点）: {e}")
+                    time.sleep(delay)
+                else:
+                    logger.error(f"❌ 下载文件失败: {e}")
+
+        logger.error(f"❌ 下载失败: {filepath}, 原因: {last_error}")
+        return False
 
     def _add_metadata_to_file(
         self,
@@ -2072,7 +2173,7 @@ class NeteaseDownloader(BaseDownloader):
             cover_mime = 'image/jpeg'
             if cover_url:
                 try:
-                    resp = self.session.get(cover_url, timeout=15)
+                    resp = self._get_session().get(cover_url, timeout=15)
                     resp.raise_for_status()
                     cover_data = resp.content
                     ctype = resp.headers.get('content-type', '').lower()

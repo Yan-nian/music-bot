@@ -10,7 +10,8 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    TZ=Asia/Shanghai
+    TZ=Asia/Shanghai \
+    MUSIC_BOT_DB_PATH=/app/db/music_bot.db
 
 # 安装系统依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \

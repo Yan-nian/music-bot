@@ -12,6 +12,23 @@ from typing import Dict, List, Any, Optional
 logger = logging.getLogger(__name__)
 
 
+def _level_clause(level: str):
+    """把 level 参数编译成 SQL 片段。
+
+    支持单值（"INFO"）和逗号分隔的多值（"ERROR,WARNING"），
+    前端「只看异常」就是靠多值实现的，否则得发两次请求再自己合并。
+    """
+    if not level:
+        return '', []
+    values = [v.strip().upper() for v in str(level).split(',') if v.strip()]
+    if not values:
+        return '', []
+    if len(values) == 1:
+        return ' AND level = ?', [values[0]]
+    placeholders = ','.join('?' * len(values))
+    return f' AND level IN ({placeholders})', values
+
+
 class LogManager:
     """日志管理 Mixin"""
     
@@ -68,9 +85,9 @@ class LogManager:
                 query = "SELECT * FROM app_logs WHERE 1=1"
                 params = []
                 
-                if level:
-                    query += " AND level = ?"
-                    params.append(level)
+                clause, clause_params = _level_clause(level)
+                query += clause
+                params.extend(clause_params)
                 
                 if category:
                     query += " AND category = ?"
@@ -110,9 +127,9 @@ class LogManager:
                 query = "SELECT COUNT(*) FROM app_logs WHERE 1=1"
                 params = []
                 
-                if level:
-                    query += " AND level = ?"
-                    params.append(level)
+                clause, clause_params = _level_clause(level)
+                query += clause
+                params.extend(clause_params)
                 
                 if category:
                     query += " AND category = ?"

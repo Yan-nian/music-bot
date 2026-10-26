@@ -34,6 +34,7 @@ logger = logging.getLogger('music_bot')
 from config_manager import ConfigManager, get_config_manager
 
 # 导入下载器
+from downloaders import get_all_downloaders
 from downloaders.netease import NeteaseDownloader
 from downloaders.apple_music import AppleMusicDownloader
 
@@ -51,7 +52,10 @@ from web.tg_notifier import (
 )
 
 # 导入下载队列
-from download_queue import get_download_queue, DownloadTask, TaskStatus
+from download_queue import get_download_queue, DownloadTask
+
+# Cookie 守护（网易云登录态自动维护）
+from cookie_keeper import CookieKeeper, register_keeper
 
 # Telegram 相关导入
 try:
@@ -100,9 +104,12 @@ class MusicBot:
         self.download_max_retries = self._cfg('download_max_retries', 3)
         self.download_retry_delay_base = self._cfg('download_retry_delay_base', 2.0)
 
-        logger.info(f"🎵 Music Bot v{BOT_VERSION} 初始化完成")
-        self.download_path = self.config.get('download_path', '/downloads')
-        
+        # 后台下载任务（持有引用，避免被 GC）
+        self._bg_tasks: "set[asyncio.Task]" = set()
+
+        # Cookie 守护（网易云登录态自动维护）
+        self.cookie_keeper: Optional[CookieKeeper] = None
+
         logger.info(f"🎵 Music Bot v{BOT_VERSION} 初始化完成")
 
     def _cfg(self, key: str, default=None):
@@ -118,22 +125,18 @@ class MusicBot:
             return self.config.get(key, default) if self.config else default
 
     def _init_downloaders(self):
-        """初始化下载器"""
-        # 网易云音乐
-        if self.config.get('netease_enabled', True):
-            try:
-                self.downloaders['netease'] = NeteaseDownloader(self.config_manager)
-                logger.info("✅ 网易云音乐下载器已启用")
-            except Exception as e:
-                logger.error(f"❌ 网易云音乐下载器初始化失败: {e}")
-        
-        # Apple Music
-        if self.config.get('apple_music_enabled', True):
-            try:
-                self.downloaders['apple_music'] = AppleMusicDownloader(self.config_manager)
-                logger.info("✅ Apple Music 下载器已启用")
-            except Exception as e:
-                logger.error(f"❌ Apple Music 下载器初始化失败: {e}")
+        """初始化下载器
+
+        走 downloaders 注册表，让 Bot 与 Web 共用同一份实例——
+        Web 侧改完 cookie / 音质后 Bot 立刻用新的，反之亦然。
+        """
+        try:
+            self.downloaders = get_all_downloaders(self.config_manager)
+        except Exception as e:
+            logger.exception(f"❌ 下载器初始化失败: {e}")
+            self.downloaders = {}
+        for name in self.downloaders:
+            logger.info(f"✅ 已启用下载器: {name}")
     
     def get_downloader_for_url(self, url: str) -> Optional[tuple]:
         """根据 URL 获取对应的下载器"""
@@ -374,24 +377,27 @@ class MusicBot:
         return platform_paths.get(platform, self.download_path)
     
     async def _safe_handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """带超时保护的消息处理包装器"""
+        """带超时保护的消息处理包装器
+
+        注意：这里的超时只保护"解析链接 + 入队"这段，不再覆盖整个下载过程。
+        下载已改成后台任务（见 _spawn_download），所以用 handler_timeout
+        （默认 60s）就够；旧实现用 download_timeout 是同一件事的两个默认值
+        打架，最终永远走 600s。
+        """
         try:
-            # 设置消息处理超时（30分钟，足够长的下载时间）
             await asyncio.wait_for(
                 self.handle_message(update, context),
-                timeout=self._cfg('download_timeout', 1800)  # 可配置，默认 30 分钟
+                timeout=self._cfg('handler_timeout', 60)
             )
         except asyncio.TimeoutError:
-            logger.error("❌ 消息处理超时 (超过30分钟)")
+            logger.error("❌ 消息处理超时")
             if update.message:
                 try:
                     await update.message.reply_text("❌ 处理超时，请重试")
                 except Exception:
                     pass
         except Exception as e:
-            logger.error(f"❌ 消息处理异常: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.exception(f"❌ 消息处理异常: {e}")
             if update.message:
                 try:
                     await update.message.reply_text(f"❌ 处理出错: {str(e)[:100]}")
@@ -467,8 +473,8 @@ class MusicBot:
             )
             return
         
-        # 未下载过，直接开始下载
-        await self._do_download(update.message, downloader_name, downloader, content_type, content_id)
+        # 未下载过，直接开始下载（后台执行，不阻塞后续消息）
+        self._spawn_download(update.message, downloader_name, downloader, content_type, content_id)
     
     async def handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理回调查询（按钮点击）"""
@@ -491,10 +497,27 @@ class MusicBot:
                 downloader = self.downloaders.get(downloader_name)
                 if downloader:
                     await query.edit_message_text(f"🔄 开始重新下载...")
-                    await self._do_download(query.message, downloader_name, downloader, content_type, content_id, is_redownload=True)
+                    self._spawn_download(query.message, downloader_name, downloader, content_type, content_id, is_redownload=True)
                 else:
                     await query.edit_message_text("❌ 下载器不可用")
             return
+
+    def _spawn_download(self, message, downloader_name: str, downloader,
+                        content_type: str, content_id: str, is_redownload: bool = False):
+        """把下载丢到后台执行，handler 立即返回。
+
+        这是 concurrent_updates(True) 之外的另一半：即便允许并发处理更新，
+        只要 handler 里 await 到下载结束，这个 handler 就一直占着。
+        改成提交即返回后，同一个人连发多个链接、或者别人中途发 /status，
+        都不会被前一个下载堵住；真正的并发上限由 DownloadQueue 的信号量控制。
+        """
+        task = asyncio.create_task(
+            self._do_download(message, downloader_name, downloader,
+                              content_type, content_id, is_redownload),
+            name=f"download-{downloader_name}-{content_id}",
+        )
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
     
     async def _do_download(self, message, downloader_name: str, downloader, content_type: str, content_id: str, is_redownload: bool = False):
         """执行下载任务（通过下载队列，支持并发控制和重试）"""
@@ -571,7 +594,7 @@ class MusicBot:
             )
             
             # 确保队列已启动
-            if not self.download_queue._running:
+            if not self.download_queue.is_running():
                 await self.download_queue.start()
             
             # 提交到队列并等待完成
@@ -579,12 +602,17 @@ class MusicBot:
             logger.info(f"🚀 任务已入队: {task_id}")
             
             try:
-                # 等待任务完成（无超时限制，由下载超时配置控制）
-                download_timeout = self._cfg('download_timeout', 600)
+                download_timeout = self._cfg('download_timeout', 1800)
                 result = await asyncio.wait_for(task._future, timeout=download_timeout)
             except asyncio.TimeoutError:
+                # 超时只是不再等，任务还在队列里跑；这里主动取消，
+                # 避免用户看到"超时"而后台其实还在下载（旧行为）
                 logger.error(f"⏱️ 下载超时: {task_id}")
+                self.download_queue.cancel(task_id)
                 result = {'success': False, 'error': f'下载超时（{download_timeout}s）'}
+            except asyncio.CancelledError:
+                self.download_queue.cancel(task_id)
+                raise
             except Exception as e:
                 logger.error(f"❌ 下载任务异常: {e}")
                 result = {'success': False, 'error': str(e)}
@@ -869,6 +897,10 @@ class MusicBot:
         # 创建应用
         try:
             builder = Application.builder().token(bot_token)
+            # 关键：PTB v20+ 默认串行处理更新（concurrent_updates=False）。
+            # 而下载是在 handler 里等待的，串行模式下一个人下专辑会把
+            # /status、/queue 和所有人的消息全部堵住。
+            builder = builder.concurrent_updates(8)
             if proxy_url:
                 builder = builder.proxy_url(proxy_url).get_updates_proxy_url(proxy_url)
             self.app = builder.build()
@@ -912,6 +944,14 @@ class MusicBot:
         # 启动健康检查任务
         health_task = asyncio.create_task(self._health_check_loop())
         logger.info("✅ Bot 健康检查任务已启动")
+
+        # 启动网易云 Cookie 守护
+        try:
+            self.cookie_keeper = CookieKeeper(self.config_manager, self._reload_netease_downloader)
+            register_keeper(self.cookie_keeper)
+            self.cookie_keeper.start()
+        except Exception as e:
+            logger.warning(f"⚠️ Cookie 守护启动失败: {e}")
         
         # 保持运行
         try:
@@ -922,6 +962,9 @@ class MusicBot:
         finally:
             sync_task.cancel()
             health_task.cancel()
+            if self.cookie_keeper:
+                self.cookie_keeper.stop()
+            await self.download_queue.stop()
             try:
                 await sync_task
             except asyncio.CancelledError:
@@ -933,6 +976,15 @@ class MusicBot:
             await self.app.updater.stop()
             await self.app.stop()
             await self.app.shutdown()
+
+    def _reload_netease_downloader(self):
+        """cookie 变更后热重载网易云下载器（Web 与 Bot 共用同一个实例）"""
+        downloader = self.downloaders.get('netease')
+        if downloader and hasattr(downloader, 'reload_config'):
+            try:
+                downloader.reload_config()
+            except Exception as e:
+                logger.warning(f"重载网易云下载器失败: {e}")
     
     def _register_handlers(self, app):
         """注册 Telegram 处理器（初始化与重建时复用）"""
@@ -1084,9 +1136,9 @@ class MusicBot:
             logger.error(f"❌ Application 重建失败: {e}，将在下次健康检查时重试")
 
 
-def run_web_server(host: str = '0.0.0.0', port: int = 5000):
+def run_web_server(host: str = '0.0.0.0', port: int = 5000, db_path: str = None):
     """运行 Web 服务器"""
-    init_web_app()
+    init_web_app(db_path)
     web_app.run(host=host, port=port, debug=False, threaded=True)
 
 
@@ -1108,7 +1160,7 @@ def main():
     if args.web_only:
         # 仅运行 Web 服务
         logger.info(f"🌐 启动 Web 配置服务 (端口: {args.web_port})")
-        run_web_server(port=args.web_port)
+        run_web_server(port=args.web_port, db_path=args.db_path)
     elif args.bot_only:
         # 仅运行 Bot
         bot = MusicBot(args.db_path)

@@ -5,7 +5,6 @@
 """
 
 import os
-import sqlite3
 import logging
 import datetime as dt
 from typing import Dict, List, Any, Optional

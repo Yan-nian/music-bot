@@ -6,14 +6,12 @@ Music Bot - 精简版音乐下载机器人
 """
 
 import os
-import sys
 import time
 import uuid
 import logging
 import asyncio
 import threading
-from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 
 # 设置环境变量
 os.environ['PYTHONWARNINGS'] = 'ignore:Unverified HTTPS request'
@@ -32,7 +30,7 @@ logging.basicConfig(
 logger = logging.getLogger('music_bot')
 
 # 导入配置管理器
-from config_manager import ConfigManager, get_config_manager
+from config_manager import get_config_manager
 
 # 导入下载器（具体平台由 downloaders 注册表按配置构建，这里不需要逐个引用）
 from downloaders import get_all_downloaders
@@ -42,7 +40,7 @@ from downloaders.errors import DownloadCancelled
 from web.app import app as web_app, init_app as init_web_app
 
 # 导入数据库日志处理器
-from web.db_logger import setup_database_logging, get_metadata_logger
+from web.db_logger import setup_database_logging
 
 # TG 消息渲染层（统一转义 / 安全发送 / 进度卡片）
 from web import tg_ui as ui
@@ -56,7 +54,7 @@ from cookie_keeper import CookieKeeper, get_keeper
 # Telegram 相关导入
 try:
     from telegram import (
-        Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, BotCommand
+        Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
     )
     from telegram.ext import (
         Application, CommandHandler, MessageHandler,
@@ -408,7 +406,7 @@ class MusicBot:
             ))
             return
 
-        await ui.send(update.message, f'⏳ 正在校验 Cookie…')
+        await ui.send(update.message, '⏳ 正在校验 Cookie…')
         try:
             self.config_manager.set_config('netease_cookies', new_cookies)
             self.config['netease_cookies'] = new_cookies
@@ -458,7 +456,6 @@ class MusicBot:
         status = '❔ 未知'
         nickname = ''
         try:
-            downloader = self.downloaders.get('netease')
             meta = get_keeper(self.config_manager).get_meta()
             status = ui.Renderer.netease_block(meta)
             nickname = meta.get('nickname') or ''
@@ -474,7 +471,7 @@ class MusicBot:
             f'  {status}' + (f' · {ui.esc(nickname)}' if nickname else ''),
             '',
             f'{ui.b("推荐做法")}',
-            f'  去后台「账号」页点扫码登录，30 秒搞定，登录态到期会自动续。',
+            '  去后台「账号」页点扫码登录，30 秒搞定，登录态到期会自动续。',
         ]
         if web_url.startswith('http'):
             lines.append(f'  {ui.code(web_url)}')
@@ -988,7 +985,9 @@ class MusicBot:
                     total = result.get('total_songs', 0)
                     
                     if new_count > 0:
-                        logger.info(f"✅ 歌单 {playlist_name} 同步完成: 新增 {new_count} 首，成功 {downloaded}，失败 {failed}")
+                        logger.info(
+                            f"✅ 歌单 {playlist_name} 同步完成: 新增 {new_count} 首，"
+                            f"成功 {downloaded}，跳过 {skipped}，失败 {failed}（共 {total}）")
                         
                         # 发送 Telegram 通知（使用新模板）
                         await self._send_playlist_sync_notification(
@@ -1127,7 +1126,7 @@ class MusicBot:
                 retry_count += 1
                 logger.error(f"❌ Telegram Bot 启动失败 (尝试 {retry_count}/{max_retries}): {e}")
                 if retry_count < max_retries:
-                    logger.info(f"⏳ 等待 30 秒后重试...")
+                    logger.info("⏳ 等待 30 秒后重试...")
                     await asyncio.sleep(30)
                 else:
                     logger.error("❌ Telegram Bot 启动失败，请检查网络连接或代理设置")

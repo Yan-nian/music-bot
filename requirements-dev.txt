@@ -1,0 +1,5 @@
+# 开发依赖（CI 与本地跑测试用）
+-r requirements.txt
+
+pytest>=8.0,<9
+ruff>=0.7

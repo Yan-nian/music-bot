@@ -41,6 +41,8 @@ class Job:
     result: Any = None
     cancelled: bool = False
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+    # 完成信号：旧的同步接口靠它做有界等待，而不是 sleep 轮询
+    _done: threading.Event = field(default_factory=threading.Event, repr=False)
 
     # ---------- 执行侧 API ----------
 
@@ -52,6 +54,18 @@ class Job:
 
     def log(self, message: str):
         self.update(message=message[:200])
+
+    def wait(self, timeout: Optional[float] = None) -> bool:
+        """等任务结束，返回是否已结束（超时返回 False）"""
+        return self._done.wait(timeout)
+
+    def finish(self):
+        """标记结束并唤醒所有等待者"""
+        self._done.set()
+
+    @property
+    def finished(self) -> bool:
+        return self.status in ('done', 'failed', 'cancelled')
 
     # ---------- 展示侧 API ----------
 
@@ -97,25 +111,29 @@ class JobManager:
             self._trim()
 
         def _runner():
-            if job.cancelled:
-                job.update(status='cancelled', finished_at=time.time(), message='已取消')
-                return
-            job.update(status='running', started_at=time.time(), message='执行中')
             try:
-                result = fn(job)
                 if job.cancelled:
                     job.update(status='cancelled', finished_at=time.time(), message='已取消')
-                else:
-                    job.update(status='done', finished_at=time.time(),
-                               result=result, message='已完成')
-                    if not job.total:
-                        job.update(progress=1, total=1)
+                    return
+                job.update(status='running', started_at=time.time(), message='执行中')
+                try:
+                    result = fn(job)
+                    if job.cancelled:
+                        job.update(status='cancelled', finished_at=time.time(), message='已取消')
                     else:
-                        job.update(progress=job.total)
-            except Exception as e:  # noqa: BLE001
-                logger.exception(f'任务 {job.id} 执行失败: {e}')
-                job.update(status='failed', finished_at=time.time(),
-                           error=str(e), message=f'失败: {str(e)[:150]}')
+                        job.update(status='done', finished_at=time.time(),
+                                   result=result, message='已完成')
+                        if not job.total:
+                            job.update(progress=1, total=1)
+                        else:
+                            job.update(progress=job.total)
+                except Exception as e:  # noqa: BLE001
+                    logger.exception(f'任务 {job.id} 执行失败: {e}')
+                    job.update(status='failed', finished_at=time.time(),
+                               error=str(e), message=f'失败: {str(e)[:150]}')
+            finally:
+                # 无论正常结束还是异常逃逸，都必须唤醒等待者，否则旧同步接口会卡满超时
+                job.finish()
 
         self._executor.submit(_runner)
         logger.info(f'🧵 已提交后台任务: {kind} / {title} ({job.id})')

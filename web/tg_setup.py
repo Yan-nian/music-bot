@@ -6,8 +6,6 @@ Telegram Session 生成器
 """
 
 import os
-import sys
-import json
 import asyncio
 import logging
 from typing import Optional, Dict, Any, Tuple

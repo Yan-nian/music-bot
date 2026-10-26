@@ -13,13 +13,12 @@ python fix_metadata.py <音乐目录>
 例如：python fix_metadata.py "d:/AI/savextube/G.E.M"
 """
 
-import os
 import sys
 from pathlib import Path
 from mutagen.flac import FLAC
 from mutagen.mp3 import MP3
 from mutagen.mp4 import MP4
-from mutagen.id3 import TRCK, TALB, TPE2
+from mutagen.id3 import TRCK, TPE2
 
 
 def fix_flac_metadata(file_path: Path, track_number: int, total_tracks: int, album_artist: str = None):

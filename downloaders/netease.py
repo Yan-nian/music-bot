@@ -787,7 +787,7 @@ class NeteaseDownloader(BaseDownloader):
                 
                 # 获取所有相关专辑的曲目信息
                 album_track_info = {}
-                logger.info(f"📝 正在获取专辑曲目信息...")
+                logger.info("📝 正在获取专辑曲目信息...")
                 for album_id in album_ids:
                     if album_id:
                         track_info = self.get_album_track_info(album_id)
@@ -1867,7 +1867,7 @@ class NeteaseDownloader(BaseDownloader):
             album = song_info.get('album', '')
             
             if not song_name:
-                logger.warning(f"⚠️ 歌曲信息不完整，无法删除文件")
+                logger.warning("⚠️ 歌曲信息不完整，无法删除文件")
                 return False
             
             # 构建文件可能所在的目录
@@ -2133,7 +2133,7 @@ class NeteaseDownloader(BaseDownloader):
             if album_info:
                 final_cover_url = final_cover_url or album_info.get('pic_url')
             
-            logger.info(f"🏷️ 元数据详情:")
+            logger.info("🏷️ 元数据详情:")
             logger.debug(f"  标题: {metadata['title']}")
             logger.debug(f"  艺术家: {metadata['artist']}")
             logger.debug(f"  专辑: {metadata['album']}")
@@ -2174,7 +2174,6 @@ class NeteaseDownloader(BaseDownloader):
         仅依赖 mutagen，可选使用 requests 下载封面
         """
         try:
-            from mutagen import File
             from mutagen.id3 import (
                 ID3, ID3NoHeaderError, TIT2, TPE1, TALB, TPE2, 
                 TRCK, TCON, APIC, TDRC, TYER, TPOS

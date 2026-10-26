@@ -5,15 +5,12 @@
 为下载的音乐文件添加ID3标签和封面
 与原项目 music_metadata.py 保持一致
 """
-import os
 import sys
 import logging
 import io
 from pathlib import Path
 from typing import Dict, Optional, Union
 import requests
-from urllib.parse import urlparse
-import tempfile
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -39,7 +36,7 @@ class MusicMetadataManager:
         
         # 检查 mutagen (推荐)
         try:
-            import mutagen
+            import mutagen  # noqa: F401  仅用于探测是否安装
             available.append('mutagen')
             logger.info("✅ 检测到 mutagen 库")
         except ImportError:
@@ -47,7 +44,7 @@ class MusicMetadataManager:
         
         # 检查 eyed3 (MP3专用)
         try:
-            import eyed3
+            import eyed3  # noqa: F401  仅用于探测是否安装
             available.append('eyed3')
             logger.info("✅ 检测到 eyed3 库")
         except ImportError:
@@ -55,7 +52,7 @@ class MusicMetadataManager:
         
         # 检查 tinytag (只读)
         try:
-            import tinytag
+            import tinytag  # noqa: F401  仅用于探测是否安装
             available.append('tinytag')
             logger.info("✅ 检测到 tinytag 库（只读）")
         except ImportError:
@@ -151,7 +148,7 @@ class MusicMetadataManager:
             if metadata.get('artist'):
                 logger.info(f"💡 album_artist为空，将使用artist作为fallback: {metadata.get('artist')}")
             else:
-                logger.warning(f"⚠️ artist和album_artist都为空，Plex可能无法正确刮削此歌曲")
+                logger.warning("⚠️ artist和album_artist都为空，Plex可能无法正确刮削此歌曲")
     
     def _add_metadata_with_mutagen(
         self, 
@@ -462,7 +459,7 @@ class MusicMetadataManager:
     ) -> bool:
         """使用eyed3库为MP3文件添加元数据（备用方案）"""
         try:
-            import eyed3
+            import eyed3  # noqa: F401  仅用于探测是否安装
             
             logger.info(f"🎵 使用eyed3为MP3文件添加元数据: {file_path.name}")
             
@@ -823,7 +820,7 @@ class MusicMetadataManager:
                 
                 tags['USLT'] = USLT(encoding=3, lang='zho', desc='', text=lyrics)
                 tags.save(str(file_path))
-                logger.info(f"✅ 成功嵌入歌词到 MP3 文件")
+                logger.info("✅ 成功嵌入歌词到 MP3 文件")
                 return True
                 
             elif file_ext == '.flac':
@@ -831,7 +828,7 @@ class MusicMetadataManager:
                 audio = FLAC(str(file_path))
                 audio['LYRICS'] = lyrics
                 audio.save()
-                logger.info(f"✅ 成功嵌入歌词到 FLAC 文件")
+                logger.info("✅ 成功嵌入歌词到 FLAC 文件")
                 return True
                 
             elif file_ext in ['.m4a', '.mp4']:
@@ -839,7 +836,7 @@ class MusicMetadataManager:
                 audio = MP4(str(file_path))
                 audio['\xa9lyr'] = lyrics
                 audio.save()
-                logger.info(f"✅ 成功嵌入歌词到 M4A 文件")
+                logger.info("✅ 成功嵌入歌词到 M4A 文件")
                 return True
             
             else:

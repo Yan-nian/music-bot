@@ -9,7 +9,7 @@ import os
 import asyncio
 import logging
 import time
-from typing import Optional, Dict, Any, Callable, Union
+from typing import Dict, Any, Callable, Union
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -295,10 +295,10 @@ class MessageTemplates:
         progress_bar = ProgressFormatter.create_progress_bar(100)
         
         lines = [
-            f"{type_icon} {type_label}：{result.collection_name}",
+            f"{icon} {type_icon} {type_label}：{result.collection_name}",
             f"💾 大小：{result.total_size_mb:.1f}MB",
-            f"⚡ 速度：完成",
-            f"⏳ 预计剩余：0秒",
+            "⚡ 速度：完成",
+            "⏳ 预计剩余：0秒",
             f"📊 进度：{progress_bar}",
             "",
             f"🎵 歌曲数量：{result.total_songs} 首",
@@ -377,7 +377,7 @@ class MessageTemplates:
         progress_bar = ProgressFormatter.create_progress_bar(current / total * 100 if total > 0 else 0)
         
         lines = [
-            f"📥 正在同步歌单...\n",
+            "📥 正在同步歌单...\n",
             f"📋 歌单：{ProgressFormatter.truncate_name(playlist_name, 25)}",
             f"📝 进度：{current}/{total} 首",
             f"🎵 当前：{ProgressFormatter.truncate_name(current_song, 30)}",
@@ -491,7 +491,7 @@ class MessageTemplates:
                              playlist_name: str = None) -> str:
         """单曲下载失败通知（在歌单同步中）"""
         lines = [
-            f"⚠️ 歌曲下载失败\n",
+            "⚠️ 歌曲下载失败\n",
             f"🎵 歌曲：{ProgressFormatter.truncate_name(song_name, 30)}",
             f"👤 歌手：{ProgressFormatter.truncate_name(artist, 20)}",
         ]
@@ -830,7 +830,7 @@ def send_telegram_notification(config_manager, message: str, parse_mode: str = N
                     if parse_mode:
                         payload['parse_mode'] = parse_mode
                     
-                    logger.info(f"📤 发送请求中...")
+                    logger.info("📤 发送请求中...")
                     response = requests.post(real_api_url, json=payload, proxies=proxies, timeout=30)
                     logger.info(f"📤 响应状态码: {response.status_code}")
                     
@@ -855,7 +855,7 @@ def send_telegram_notification(config_manager, message: str, parse_mode: str = N
         if success_count > 0:
             logger.info(f"✅ TG 通知已发送给 {success_count} 个用户")
         else:
-            logger.warning(f"⚠️ TG 通知发送失败，没有成功发送给任何用户")
+            logger.warning("⚠️ TG 通知发送失败，没有成功发送给任何用户")
         
         return success_count > 0
         

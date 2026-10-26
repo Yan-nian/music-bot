@@ -5,8 +5,6 @@
 所有音乐下载器的基类
 """
 
-import os
-import re
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path

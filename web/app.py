@@ -16,7 +16,7 @@ import threading
 from collections import defaultdict
 from functools import wraps
 from pathlib import Path
-from flask import (Flask, Blueprint, jsonify, request, render_template,
+from flask import (Flask, jsonify, request, render_template,
                    session, redirect, url_for)
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -38,6 +38,60 @@ app.secret_key = os.environ.get('FLASK_SECRET_KEY') or secrets.token_hex(32)
 # 禁用模板缓存，确保修改后立即生效（防止浏览器/CDN 缓存旧版 HTML）
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 app.config['TEMPLATES_AUTO_RELOAD'] = True
+
+# Session Cookie 加固：
+# - HttpOnly 让 JS 读不到（XSS 时少一样东西可偷）
+# - SameSite=Lax 挡掉跨站 POST 携带 Cookie，是 CSRF 的第一道闸
+# - 部署在 HTTPS 后面时设 WEB_HTTPS=1 打开 Secure，否则明文回传
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SECURE=os.environ.get('WEB_HTTPS', '').lower() in ('1', 'true', 'yes'),
+)
+
+
+@app.after_request
+def _security_headers(response):
+    """补一组基础安全响应头
+
+    CSP 里必须留 'unsafe-inline'：模板大量使用内联脚本和 style 属性，
+    收紧到 hash 级别改动面太大，先把外部资源注入这条路堵上。
+    """
+    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    response.headers.setdefault('X-Frame-Options', 'DENY')
+    response.headers.setdefault('Referrer-Policy', 'same-origin')
+    response.headers.setdefault(
+        'Permissions-Policy', 'geolocation=(), microphone=(), camera=()')
+    if 'Content-Security-Policy' not in response.headers:
+        response.headers['Content-Security-Policy'] = (
+            "default-src 'self'; "
+            # 网易云头像、封面是外链图片，只放行图片这一种资源
+            "img-src 'self' data: https:; "
+            "style-src 'self' 'unsafe-inline'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'"
+        )
+    return response
+
+
+@app.before_request
+def _block_cross_site_writes():
+    """挡跨站写请求（CSRF 的第二道闸）
+
+    为什么不比 Origin 和 Host：反代后面常出现 Host 是内网地址、Origin 是公网
+    域名的情况，硬比会把正常请求全拦掉。Sec-Fetch-Site 是浏览器按「真实发起的
+    页面来源」算出来的，反代不影响它，只认这个字段最稳。
+    命令行/脚本调用不会带这个头，所以不会被误伤。
+    """
+    if request.method in ('GET', 'HEAD', 'OPTIONS'):
+        return None
+    if request.headers.get('Sec-Fetch-Site') == 'cross-site':
+        logger.warning(f'🛑 拒绝跨站写请求: {request.method} {request.path}')
+        return jsonify({'success': False, 'error': '跨站请求被拒绝'}), 403
+    return None
 
 
 @app.after_request
@@ -195,10 +249,12 @@ def init_app(db_path: str = None):
         print('=' * 62, flush=True)
 
     # 注册 Telegram Setup Blueprint
+    # 幂等：init_app 可能被重复调用（--web-only 与 Bot 同时启动、测试里多次初始化），
+    # 重复注册同名蓝图会直接抛 ValueError，所以先看有没有注册过。
     from .tg_setup import create_tg_setup_blueprint, init_tg_setup
-    tg_setup_bp = create_tg_setup_blueprint()
     init_tg_setup(config_manager)
-    app.register_blueprint(tg_setup_bp)
+    if 'tg_setup' not in app.blueprints:
+        app.register_blueprint(create_tg_setup_blueprint())
 
     # 队列并发数按配置初始化。
     # 之前只有 MusicBot.__init__ 会读 download_max_concurrent，--web-only 模式下
@@ -792,50 +848,23 @@ def delete_playlist(playlist_id: str):
 @app.route('/api/playlists/<playlist_id>/sync', methods=['POST'])
 @login_required
 def sync_playlist(playlist_id: str):
-    """同步歌单（增量下载）"""
+    """同步歌单（增量下载）
+
+    兼容旧脚本：默认最多等 20 秒拿结果，没跑完就返回 202 + job_id。
+    `?wait=0` 立即返回，`?wait=600` 最多等十分钟。
+    """
     try:
         platform = request.args.get('platform', 'netease')
-        
-        # 检查歌单是否存在
         playlist = config_manager.get_subscribed_playlist(playlist_id, platform)
         if not playlist:
             return jsonify({'success': False, 'error': '歌单不存在'}), 404
-        
-        playlist_name = playlist.get('playlist_name', '未知歌单')
-        
-        # 获取下载目录
-        download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
-        
-        # 创建下载器并执行增量下载
-        from downloaders import get_downloader
-        downloader = get_downloader('netease', config_manager)
-        
-        result = downloader.download_playlist_incremental(
-            playlist_id=playlist_id,
-            download_dir=download_dir
-        )
-        config_manager.record_download_result(
-            platform, 'playlist', playlist_id, result, download_dir)
-        
-        # 发送 TG 通知
-        try:
-            from web.tg_notifier import notify_playlist_sync_result
-            logger.info(f"📨 准备发送歌单同步 TG 通知: {playlist_name}")
-            notify_playlist_sync_result(config_manager, result, playlist_name)
-        except Exception as e:
-            logger.error(f"❌ 发送 TG 通知失败: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-        
-        return jsonify({
-            'success': result.get('success', False),
-            'data': result
-        })
-        
+
+        from .tasks import build_playlist_sync
+        spec = build_playlist_sync(config_manager, playlist_id, platform)
+        return _legacy_job_response(spec, _legacy_wait_seconds())
+
     except Exception as e:
-        logger.error(f"同步歌单失败: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.exception(f"提交歌单同步失败: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -845,10 +874,10 @@ def check_playlist_updates(playlist_id: str):
     """检查歌单更新（不下载，仅检查新歌曲）"""
     try:
         platform = request.args.get('platform', 'netease')
-        
+
         # 创建下载器获取歌单信息
         from downloaders import get_downloader
-        downloader = get_downloader('netease', config_manager)
+        downloader = get_downloader(platform, config_manager)
         
         songs, playlist_name = downloader.get_playlist_songs(playlist_id)
         
@@ -889,76 +918,22 @@ def check_playlist_updates(playlist_id: str):
 @app.route('/api/playlists/sync-all', methods=['POST'])
 @login_required
 def sync_all_playlists():
-    """同步所有启用的歌单"""
+    """同步所有启用的歌单（兼容旧脚本，语义同 /api/playlists/<id>/sync）"""
     try:
         playlists = config_manager.get_subscribed_playlists(enabled_only=True)
-        
         if not playlists:
             return jsonify({
                 'success': True,
                 'message': '没有启用的订阅歌单',
                 'data': {'total': 0, 'synced': 0}
             })
-        
-        download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
-        
-        from downloaders import get_downloader
-        downloader = get_downloader('netease', config_manager)
-        
-        results = []
-        total_new_songs = 0
-        total_downloaded = 0
-        total_failed = 0
-        
-        for playlist in playlists:
-            try:
-                result = downloader.download_playlist_incremental(
-                    playlist_id=playlist['playlist_id'],
-                    download_dir=download_dir
-                )
-                config_manager.record_download_result(
-                    'netease', 'playlist', playlist['playlist_id'], result, download_dir)
-                failed_count = result.get('failed_songs', 0)
-                results.append({
-                    'playlist_id': playlist['playlist_id'],
-                    'playlist_name': playlist['playlist_name'],
-                    'success': result.get('success', False),
-                    'new_songs': result.get('new_songs', 0),
-                    'downloaded': result.get('downloaded_songs', 0),
-                    'failed': failed_count
-                })
-                total_new_songs += result.get('new_songs', 0)
-                total_downloaded += result.get('downloaded_songs', 0)
-                total_failed += failed_count
-            except Exception as e:
-                logger.error(f"同步歌单 {playlist['playlist_id']} 失败: {e}")
-                results.append({
-                    'playlist_id': playlist['playlist_id'],
-                    'playlist_name': playlist['playlist_name'],
-                    'success': False,
-                    'error': str(e)
-                })
-        
-        # 发送 TG 通知
-        try:
-            from web.tg_notifier import notify_all_playlists_sync_result
-            notify_all_playlists_sync_result(config_manager, len(playlists), results)
-        except Exception as e:
-            logger.debug(f"发送 TG 通知失败: {e}")
-        
-        return jsonify({
-            'success': True,
-            'data': {
-                'total': len(playlists),
-                'results': results,
-                'total_new_songs': total_new_songs,
-                'total_downloaded': total_downloaded,
-                'total_failed': total_failed
-            }
-        })
-        
+
+        from .tasks import build_playlist_sync_all
+        spec = build_playlist_sync_all(config_manager)
+        return _legacy_job_response(spec, _legacy_wait_seconds())
+
     except Exception as e:
-        logger.error(f"同步所有歌单失败: {e}")
+        logger.exception(f"提交全量同步失败: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -995,51 +970,22 @@ def get_all_failed_songs():
 @app.route('/api/playlists/<playlist_id>/retry-failed', methods=['POST'])
 @login_required
 def retry_failed_songs(playlist_id: str):
-    """重试下载失败的歌曲"""
+    """重试下载失败的歌曲（兼容旧脚本）"""
     try:
-        # 获取失败的歌曲
         failed_songs = config_manager.get_failed_songs(playlist_id)
-        
         if not failed_songs:
             return jsonify({
                 'success': True,
                 'message': '没有需要重试的歌曲',
                 'data': {'retried': 0, 'success': 0}
             })
-        
-        download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
-        
-        from downloaders import get_downloader
-        downloader = get_downloader('netease', config_manager)
-        
-        success_count = 0
-        for song in failed_songs:
-            # 清除失败状态
-            config_manager.clear_song_fail_status(playlist_id, song['song_id'])
-            
-            # 尝试重新下载
-            result = downloader.download_song(song['song_id'], download_dir)
-            config_manager.record_download_result(
-                'netease', 'song', str(song['song_id']), result, download_dir)
-            
-            if result.get('success'):
-                config_manager.mark_song_downloaded(playlist_id, song['song_id'])
-                success_count += 1
-            else:
-                # 重新标记失败
-                config_manager.mark_song_failed(playlist_id, song['song_id'], result.get('error', '重试失败'))
-        
-        return jsonify({
-            'success': True,
-            'data': {
-                'retried': len(failed_songs),
-                'success': success_count,
-                'still_failed': len(failed_songs) - success_count
-            }
-        })
-        
+
+        from .tasks import build_retry_failed
+        spec = build_retry_failed(config_manager, playlist_id)
+        return _legacy_job_response(spec, _legacy_wait_seconds())
+
     except Exception as e:
-        logger.error(f"重试下载失败: {e}")
+        logger.exception(f"提交重试任务失败: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -1066,51 +1012,26 @@ def clear_failed_songs(playlist_id: str):
 @app.route('/api/playlists/<playlist_id>/refresh-metadata', methods=['POST'])
 @login_required
 def refresh_playlist_metadata(playlist_id: str):
-    """刷新歌单已下载歌曲的元数据（不重新下载）"""
+    """刷新歌单已下载歌曲的元数据（不重新下载，兼容旧脚本）"""
     try:
-        download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
-        
-        from downloaders import get_downloader
-        downloader = get_downloader('netease', config_manager)
-        
-        result = downloader.refresh_playlist_metadata(
-            playlist_id=playlist_id,
-            download_dir=download_dir
-        )
-        
-        return jsonify({
-            'success': result.get('success', False),
-            'data': result
-        })
-        
+        from .tasks import build_refresh_metadata
+        spec = build_refresh_metadata(config_manager, playlist_id)
+        return _legacy_job_response(spec, _legacy_wait_seconds())
     except Exception as e:
-        logger.error(f"刷新元数据失败: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.exception(f"提交元数据任务失败: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/refresh-metadata', methods=['POST'])
 @login_required
 def refresh_all_metadata():
-    """刷新下载目录中所有音乐文件的元数据"""
+    """刷新下载目录中所有音乐文件的元数据（兼容旧脚本）"""
     try:
-        download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
-        
-        from downloaders import get_downloader
-        downloader = get_downloader('netease', config_manager)
-        
-        result = downloader.refresh_metadata(download_dir=download_dir)
-        
-        return jsonify({
-            'success': result.get('success', False),
-            'data': result
-        })
-        
+        from .tasks import build_refresh_metadata
+        spec = build_refresh_metadata(config_manager)
+        return _legacy_job_response(spec, _legacy_wait_seconds())
     except Exception as e:
-        logger.error(f"刷新元数据失败: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.exception(f"提交元数据任务失败: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -1568,6 +1489,68 @@ def _job_payload(job):
     return job.to_dict()
 
 
+# ==================== 任务投递与旧接口兼容 ====================
+
+# 旧同步接口默认最多等这么久，超时就把请求转成「已排队」，让调用方去轮询。
+# 不能无限等：浏览器/反代 60 秒就断，用户看到的是报错，而后端还在跑。
+LEGACY_WAIT_DEFAULT = 20.0
+LEGACY_WAIT_MAX = 900.0
+
+
+def _submit_spec(spec, wait: float = 0.0):
+    """把 TaskSpec 投递到任务池，可选有界等待"""
+    from .jobs import job_manager
+
+    job = job_manager.submit(spec.kind, spec.title, spec.run, total=spec.total)
+    if wait > 0:
+        job.wait(min(wait, LEGACY_WAIT_MAX))
+    return job
+
+
+def _legacy_wait_seconds() -> float:
+    """旧接口的等待时长，`?wait=0` 表示立即返回，`?wait=120` 最多等两分钟"""
+    raw = request.args.get('wait')
+    if raw is None:
+        return LEGACY_WAIT_DEFAULT
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return LEGACY_WAIT_DEFAULT
+
+
+def _legacy_job_response(spec, wait: float):
+    """投递任务并尽量用旧的响应结构回话
+
+    - 等到了结果：返回和旧版完全一致的 `{success, data}`
+    - 任务失败：和旧版一样 500
+    - 还没跑完：202 + job_id，调用方轮询 `GET /api/jobs/<id>`
+    """
+    job = _submit_spec(spec, wait)
+
+    if job.status == 'done':
+        body = spec.legacy_shape(job.result) if spec.legacy_shape else {
+            'success': True, 'data': job.result}
+        body = dict(body or {})
+        body.setdefault('success', True)
+        body['job_id'] = job.id
+        return jsonify(body), 200
+
+    if job.status in ('failed', 'cancelled'):
+        return jsonify({
+            'success': False,
+            'error': job.error or job.message or '任务已取消',
+            'job_id': job.id,
+        }), 500
+
+    return jsonify({
+        'success': True,
+        'pending': True,
+        'job_id': job.id,
+        'message': f'任务已转入后台，轮询 /api/jobs/{job.id} 获取结果',
+        'data': job.to_dict(),
+    }), 202
+
+
 @app.route('/api/jobs', methods=['GET'])
 @login_required
 def api_jobs():
@@ -1601,32 +1584,15 @@ def api_job_cancel(job_id: str):
 def api_job_playlist_sync():
     """异步同步单个歌单"""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         playlist_id = str(data.get('playlist_id', '')).strip()
         platform = data.get('platform', 'netease')
         if not playlist_id:
             return jsonify({'success': False, 'error': '缺少 playlist_id'}), 400
 
-        from .jobs import job_manager
-        from downloaders import get_downloader
-
-        playlist = config_manager.get_subscribed_playlist(playlist_id, platform) or {}
-        title = playlist.get('playlist_name') or f'歌单 {playlist_id}'
-
-        def _run(job):
-            downloader = get_downloader(platform, config_manager)
-            path_key = 'netease_download_path' if platform == 'netease' else f'{platform}_download_path'
-            download_dir = config_manager.get_config(path_key, '/downloads')
-            job.update(progress=1, total=3, message='拉取歌单信息')
-            result = downloader.download_playlist_incremental(playlist_id, download_dir)
-            job.update(progress=3, message='写入记录')
-            # Web 触发的同步必须自己写历史，否则仪表盘的累计/今日/容量永远是 0
-            config_manager.record_download_result(
-                platform, 'playlist', playlist_id, result, download_dir)
-            return {'success': bool(result.get('success')), 'detail': result}
-
-        job = job_manager.submit('playlist_sync', f'同步歌单 · {title}', _run, total=3)
-        return jsonify({'success': True, 'data': _job_payload(job)})
+        from .tasks import build_playlist_sync
+        spec = build_playlist_sync(config_manager, playlist_id, platform)
+        return jsonify({'success': True, 'data': _job_payload(_submit_spec(spec))})
     except Exception as e:
         logger.exception(f"提交歌单同步任务失败: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1637,37 +1603,13 @@ def api_job_playlist_sync():
 def api_job_playlist_sync_all():
     """异步同步全部启用的歌单"""
     try:
-        from .jobs import job_manager
-        from downloaders import get_downloader
-
         playlists = config_manager.get_subscribed_playlists(enabled_only=True)
         if not playlists:
             return jsonify({'success': False, 'error': '没有启用的订阅歌单'}), 400
 
-        def _run(job):
-            job.update(total=len(playlists), progress=0)
-            downloader = get_downloader('netease', config_manager)
-            download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
-            ok = 0
-            for index, item in enumerate(playlists, 1):
-                if job.cancelled:
-                    break
-                name = item.get('playlist_name') or item['playlist_id']
-                job.update(progress=index - 1, message=f'({index}/{len(playlists)}) {name}')
-                try:
-                    result = downloader.download_playlist_incremental(
-                        item['playlist_id'], download_dir)
-                    config_manager.record_download_result(
-                        'netease', 'playlist', item['playlist_id'], result, download_dir)
-                    ok += 1 if result.get('success') else 0
-                except Exception as e:  # noqa: BLE001
-                    logger.warning(f"同步歌单 {name} 失败: {e}")
-                job.update(progress=index)
-            return {'synced': ok, 'total': len(playlists)}
-
-        job = job_manager.submit('playlist_sync_all', f'同步全部歌单（{len(playlists)} 个）',
-                                 _run, total=len(playlists))
-        return jsonify({'success': True, 'data': _job_payload(job)})
+        from .tasks import build_playlist_sync_all
+        spec = build_playlist_sync_all(config_manager)
+        return jsonify({'success': True, 'data': _job_payload(_submit_spec(spec))})
     except Exception as e:
         logger.exception(f"提交全量同步任务失败: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1678,43 +1620,17 @@ def api_job_playlist_sync_all():
 def api_job_retry_failed():
     """异步重试某个歌单的失败曲目"""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         playlist_id = str(data.get('playlist_id', '')).strip()
         if not playlist_id:
             return jsonify({'success': False, 'error': '缺少 playlist_id'}), 400
 
-        from .jobs import job_manager
-        from downloaders import get_downloader
-
-        failed = config_manager.get_failed_songs(playlist_id)
-        if not failed:
+        if not config_manager.get_failed_songs(playlist_id):
             return jsonify({'success': False, 'error': '没有失败的曲目'}), 400
 
-        def _run(job):
-            downloader = get_downloader('netease', config_manager)
-            download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
-            job.update(total=len(failed), progress=0)
-            done = 0
-            for index, song in enumerate(failed, 1):
-                if job.cancelled:
-                    break
-                job.update(progress=index - 1,
-                           message=f"({index}/{len(failed)}) {song.get('song_name')}")
-                try:
-                    song_result = downloader.download_song(song['song_id'], download_dir)
-                    config_manager.record_download_result(
-                        'netease', 'song', str(song['song_id']), song_result, download_dir)
-                    config_manager.mark_song_downloaded(playlist_id, song['song_id'])
-                    config_manager.clear_song_fail_status(playlist_id, song['song_id'])
-                    done += 1
-                except Exception as e:  # noqa: BLE001
-                    logger.warning(f"重试失败曲目出错: {e}")
-                job.update(progress=index)
-            return {'retried': done, 'total': len(failed)}
-
-        job = job_manager.submit('retry_failed', f'重试失败曲目（{len(failed)} 首）',
-                                 _run, total=len(failed))
-        return jsonify({'success': True, 'data': _job_payload(job)})
+        from .tasks import build_retry_failed
+        spec = build_retry_failed(config_manager, playlist_id)
+        return jsonify({'success': True, 'data': _job_payload(_submit_spec(spec))})
     except Exception as e:
         logger.exception(f"提交重试任务失败: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1725,24 +1641,12 @@ def api_job_retry_failed():
 def api_job_refresh_metadata():
     """异步刷新已下载文件的元数据"""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         playlist_id = str(data.get('playlist_id', '')).strip()
 
-        from .jobs import job_manager
-        from downloaders import get_downloader
-
-        def _run(job):
-            downloader = get_downloader('netease', config_manager)
-            download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
-            job.update(total=1, progress=0, message='扫描并修复元数据')
-            if playlist_id:
-                result = downloader.refresh_playlist_metadata(playlist_id, download_dir)
-            else:
-                result = downloader.refresh_metadata(download_dir)
-            return result
-
-        job = job_manager.submit('refresh_metadata', '刷新元数据', _run, total=1)
-        return jsonify({'success': True, 'data': _job_payload(job)})
+        from .tasks import build_refresh_metadata
+        spec = build_refresh_metadata(config_manager, playlist_id)
+        return jsonify({'success': True, 'data': _job_payload(_submit_spec(spec))})
     except Exception as e:
         logger.exception(f"提交元数据任务失败: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500

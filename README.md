@@ -1,5 +1,7 @@
 # Music Bot - 精简版音乐下载机器人
 
+[![CI](https://github.com/Yan-nian/music-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/Yan-nian/music-bot/actions/workflows/ci.yml)
+
 基于原 SaveXTube 项目重构，专注于音乐下载功能，支持 Web 配置管理。
 当前内置两个下载器：网易云音乐、Apple Music。
 
@@ -163,6 +165,8 @@ music_bot/
 ├── main.py                 # 主程序入口
 ├── config_manager.py       # 配置管理器（SQLite）
 ├── requirements.txt        # Python 依赖
+├── requirements-dev.txt    # 开发依赖（pytest / ruff）
+├── pyproject.toml          # ruff 与 pytest 配置
 ├── Dockerfile              # Docker 构建文件
 ├── docker-compose.yml      # Docker Compose 配置
 ├── README.md               # 本文档
@@ -184,7 +188,8 @@ music_bot/
 └── web/                    # Web 管理后台
     ├── __init__.py
     ├── app.py              # Flask 应用 + API
-    ├── jobs.py             # 后台任务（同步歌单 / 刷新元数据 / 批量重试）
+    ├── jobs.py             # 后台任务池（线程池 + 状态查询 + 取消）
+    ├── tasks.py            # 长任务执行体（新老接口共用，避免行为漂移）
     ├── db_logger.py         # 把应用日志写进数据库（供日志页展示）
     ├── tg_setup.py         # Telegram Session 生成器
     ├── tg_ui.py            # TG 消息渲染层（HTML 转义 / 安全发送 / 进度卡片）
@@ -192,6 +197,9 @@ music_bot/
     │   ├── css/app.css     # 设计系统（不依赖任何 CSS 框架）
     │   └── js/app.js       # 图标 / 请求封装 / 弹窗 / 格式化工具
     └── templates/          # base.html + 各页面模板
+
+tests/                      # pytest 用例（不依赖网络与 Telegram）
+tools/inspect_tags.py       # 查看音频标签，排查播放器把专辑拆成多张的问题
 ```
 
 > 数据库位置：Docker 内固定 `/app/db/music_bot.db`（由 `MUSIC_BOT_DB_PATH` 指定，compose 里挂载 `./db`）。
@@ -347,11 +355,61 @@ POST /api/jobs/playlist-sync-all      # 同步全部歌单
 POST /api/jobs/retry-failed           # 重试失败曲目
 POST /api/jobs/refresh-metadata       # 刷新已下载文件元数据
 
+# 兼容旧脚本的同步入口（内部已转成后台任务）
+POST /api/playlists/<id>/sync          # 同步单个歌单
+POST /api/playlists/sync-all           # 同步全部歌单
+POST /api/playlists/<id>/retry-failed  # 重试失败曲目
+POST /api/playlists/<id>/refresh-metadata
+POST /api/refresh-metadata
+
 # Telegram Session
 POST /tg/send_code        # 发送验证码
 POST /tg/confirm_code     # 确认验证码
 POST /tg/save_session     # 保存 Session
 ```
+
+### 关于那几个「同步」接口
+
+它们内部和 `/api/jobs/*` 走同一个执行体，默认最多等 20 秒：
+
+```bash
+# 等结果（歌单小的话直接拿到 {success, data}）
+curl -X POST -b cookie.txt http://nas:5000/api/playlists/123456/sync
+
+# 立刻返回，202 + job_id，自己轮询
+curl -X POST -b cookie.txt 'http://nas:5000/api/playlists/123456/sync?wait=0'
+curl -b cookie.txt http://nas:5000/api/jobs/<job_id>
+
+# 最多等 10 分钟
+curl -X POST -b cookie.txt 'http://nas:5000/api/playlists/123456/sync?wait=600'
+```
+
+20 秒是个折中：等太久，浏览器和反向代理会先断；不等，老脚本拿到的
+只是「已排队」。要结果就轮询 `/api/jobs/<id>`，比阻塞请求线程靠谱。
+
+## 🔒 安全说明
+
+- 首次启动自动生成随机管理员密码，打印在控制台（`docker logs` 可见），登录后请在「账号」页改掉
+- 密码用 PBKDF2 加盐存储；登录失败按 IP 计数，连续失败会临时锁定
+- Session Cookie 带 `HttpOnly` + `SameSite=Lax`；HTTPS 部署时设 `WEB_HTTPS=1` 额外加 `Secure`
+- 跨站写请求按 `Sec-Fetch-Site` 拦截（CSRF），命令行/脚本调用不带这个头，不会被误伤
+- 所有响应带 CSP、`X-Frame-Options: DENY`、`X-Content-Type-Options: nosniff`
+- `/api/config/export` 默认脱敏（Bot Token、Cookie、密码都打码），要明文得显式加 `?secrets=true`
+- 别把管理后台直接暴露到公网；至少套一层反向代理 + HTTPS
+
+## 🧪 开发与测试
+
+```bash
+pip install -r requirements-dev.txt
+
+pytest            # 68 项用例，不联网、不连 Telegram
+ruff check .      # 只查「真会炸」的规则（E9 / F）
+```
+
+CI（`.github/workflows/ci.yml`）在每次 push / PR 时跑 ruff、全模块编译、
+导入冒烟和 pytest（Python 3.11 / 3.12）。
+
+pytest 会用临时目录建独立数据库，不会碰你的 `db/music_bot.db`。
 
 ## 📄 License
 

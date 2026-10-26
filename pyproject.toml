@@ -1,0 +1,27 @@
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+exclude = [
+    "__pycache__",
+    ".git",
+    "db",
+    "downloads",
+    "logs",
+    "cookies",
+    ".venv",
+    "venv",
+]
+
+[tool.ruff.lint]
+# 只开「真会炸」的规则：语法错误 + 未定义名 + 未使用变量/导入。
+# 风格类规则（E1/E2/E5、I）对现有代码量太大，单独提 PR 再说。
+select = ["E9", "F"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    # 依赖自身的版本告警跟本仓库无关，别刷屏
+    "ignore:.*doesn't match a supported version.*:Warning",
+]

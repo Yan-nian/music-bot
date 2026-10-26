@@ -27,3 +27,15 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# 测试与工具缓存
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.log
+
+# 临时产物
+_tmp*/
+*.part

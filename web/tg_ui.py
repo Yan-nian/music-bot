@@ -193,7 +193,8 @@ def type_label(content_type: str):
 
 # 用户看到 "HTTP 403" 是没有任何信息的。把常见的失败翻译成「原因 + 该怎么办」。
 _ERROR_RULES = (
-    (('cookie', '登录', '未登录', 'cookie 失效', '未找到用户'),
+    (('cookie', '登录', '未登录', 'cookie 失效', '未找到用户',
+      '401', 'unauthorized', 'login required', 'invalid token'),
      'Cookie 失效或未登录',
      '在 Web 后台「账号」页扫码重新登录，或发送 /cookie 更新'),
     (('vip', '会员', '付费', '无版权', '版权'),

@@ -8,11 +8,12 @@ Music Bot - 精简版音乐下载机器人
 import os
 import sys
 import time
+import uuid
 import logging
 import asyncio
 import threading
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 # 设置环境变量
 os.environ['PYTHONWARNINGS'] = 'ignore:Unverified HTTPS request'
@@ -33,10 +34,9 @@ logger = logging.getLogger('music_bot')
 # 导入配置管理器
 from config_manager import ConfigManager, get_config_manager
 
-# 导入下载器
+# 导入下载器（具体平台由 downloaders 注册表按配置构建，这里不需要逐个引用）
 from downloaders import get_all_downloaders
-from downloaders.netease import NeteaseDownloader
-from downloaders.apple_music import AppleMusicDownloader
+from downloaders.errors import DownloadCancelled
 
 # 导入 Web 服务
 from web.app import app as web_app, init_app as init_web_app
@@ -44,12 +44,8 @@ from web.app import app as web_app, init_app as init_web_app
 # 导入数据库日志处理器
 from web.db_logger import setup_database_logging, get_metadata_logger
 
-# 导入 TG 通知模块
-from web.tg_notifier import (
-    TelegramNotifier,
-    ProgressFormatter, MessageTemplates,
-    DownloadType, ProgressInfo, DownloadResult
-)
+# TG 消息渲染层（统一转义 / 安全发送 / 进度卡片）
+from web import tg_ui as ui
 
 # 导入下载队列
 from download_queue import get_download_queue, DownloadTask
@@ -59,13 +55,13 @@ from cookie_keeper import CookieKeeper, get_keeper
 
 # Telegram 相关导入
 try:
-    from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
+    from telegram import (
+        Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, BotCommand
+    )
     from telegram.ext import (
         Application, CommandHandler, MessageHandler,
         filters, ContextTypes, CallbackQueryHandler
     )
-    from telegram.constants import ParseMode
-    from telegram.error import TelegramError
     TELEGRAM_AVAILABLE = True
 except ImportError:
     TELEGRAM_AVAILABLE = False
@@ -107,6 +103,15 @@ class MusicBot:
         # 后台下载任务（持有引用，避免被 GC）
         self._bg_tasks: "set[asyncio.Task]" = set()
 
+        # 回调按钮的短码表。
+        # Telegram 的 callback_data 上限 64 字节，而 task_id / 链接里可能带长 ID；
+        # 另外把「按钮含义」和「业务参数」解耦后，改按钮文案不用动解析逻辑。
+        self._cb_actions: Dict[str, tuple] = {}
+        self._cb_lock = threading.Lock()
+
+        # 「没看到链接」提示的节流表（user_id → 上次提示时间）
+        self._hint_at: Dict[int, float] = {}
+
         # Cookie 守护（网易云登录态自动维护）
         self.cookie_keeper: Optional[CookieKeeper] = None
 
@@ -145,228 +150,351 @@ class MusicBot:
                 return name, downloader
         return None
     
+    # ==================== 回调数据短码 ====================
+
+    def _register_action(self, action: str, payload: Any = None) -> str:
+        """生成 callback_data。格式 `<首字母>:<10位hex>`，最长 12 字节。"""
+        token = uuid.uuid4().hex[:10]
+        with self._cb_lock:
+            self._cb_actions[token] = (action, payload)
+            # 按钮点过就没人再用，但历史消息里的按钮可能还被点。
+            # 保留最近 800 个，够覆盖几十条消息。
+            if len(self._cb_actions) > 800:
+                for stale in list(self._cb_actions)[:200]:
+                    self._cb_actions.pop(stale, None)
+        return f'{action[:1]}:{token}'
+
+    def _resolve_action(self, data: str):
+        """解析 callback_data，返回 (action, payload)；无效返回 (None, None)。"""
+        if not data or ':' not in data:
+            return None, None
+        prefix, _, token = data.partition(':')
+        with self._cb_lock:
+            entry = self._cb_actions.get(token)
+        if not entry:
+            return None, None
+        return entry
+
+    # ==================== 键盘 ====================
+
+    def _main_keyboard(self):
+        """首页快捷键盘。比以前纯文本好点：少打字，也能直接跳后台。"""
+        rows = [
+            [
+                InlineKeyboardButton('📊 状态', callback_data=self._register_action('status')),
+                InlineKeyboardButton('📥 队列', callback_data=self._register_action('queue')),
+            ],
+            [
+                InlineKeyboardButton('📜 历史', callback_data=self._register_action('history', 1)),
+                InlineKeyboardButton('🍪 账号', callback_data=self._register_action('cookie')),
+            ],
+        ]
+        web_url = str(self._cfg('web_ui_url', '') or '').strip()
+        if web_url.startswith('http'):
+            rows.append([InlineKeyboardButton('🌐 打开管理后台', url=web_url)])
+        return InlineKeyboardMarkup(rows)
+
+    def _refresh_keyboard(self, action: str, payload: Any = None):
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton('🔄 刷新', callback_data=self._register_action(action, payload))
+        ]])
+
+    def _history_keyboard(self, page: int, total_pages: int):
+        """翻页按钮。到头的那侧不放按钮，比放一个灰的更容易理解。"""
+        row = []
+        if page > 1:
+            row.append(InlineKeyboardButton('‹ 上一页', callback_data=self._register_action('history', page - 1)))
+        row.append(InlineKeyboardButton(f'{page}/{total_pages}', callback_data=self._register_action('noop')))
+        if page < total_pages:
+            row.append(InlineKeyboardButton('下一页 ›', callback_data=self._register_action('history', page + 1)))
+        return InlineKeyboardMarkup([row])
+
+    # ==================== /start /help ====================
+
     async def handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理 /start 命令"""
         user = update.message.from_user
         logger.info(f"📨 收到 /start 命令: 用户={user.id}({user.username})")
-        
-        # 检查用户权限
+
         if not self.check_allowed_user(user.id):
             logger.warning(f"⚠️ 用户 {user.id} 不在允许列表中")
-            await update.message.reply_text("⚠️ 您没有权限使用此 Bot")
+            await ui.send(update.message, ui.Renderer.error_card(
+                '没有使用权限',
+                '当前账号不在白名单里',
+                f'把你的 ID {user.id} 发给管理员，加到「允许的用户」里就能用了',
+            ))
             return
-            
-        welcome_msg = (
-            "🎵 *Music Bot* - 音乐下载机器人\n\n"
-            "发送音乐链接即可下载！\n\n"
-            "*支持的平台：*\n"
-            "• 🎵 网易云音乐 - 歌曲/专辑/歌单\n"
-            "• 🍎 Apple Music - 歌曲/专辑\n\n"
-            "*命令：*\n"
-            "/start - 显示帮助\n"
-            "/status - 查看状态\n"
-            "/history - 查看下载历史\n"
-            "/cookie - 更新网易云 cookies\n"
+
+        await ui.send(
+            update.message,
+            ui.Renderer.welcome('Music Bot'),
+            keyboard=self._main_keyboard(),
         )
-        await update.message.reply_text(welcome_msg, parse_mode=ParseMode.MARKDOWN)
-    
+
     async def handle_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理 /status 命令"""
-        status_lines = ["📊 *Bot 状态*\n"]
-        
+        if not self.check_allowed_user(update.message.from_user.id):
+            await ui.send(update.message, ui.Renderer.error_card('没有使用权限', '不在白名单里'))
+            return
+        await ui.send(
+            update.message,
+            ui.Renderer.status_card(self._build_status_data()),
+            keyboard=self._refresh_keyboard('status'),
+        )
+
+    def _build_status_data(self) -> Dict[str, Any]:
+        """组装状态卡片的数据。状态卡被 /status 和按钮刷新共用。"""
+        platforms = []
         for name, downloader in self.downloaders.items():
-            status_lines.append(f"• {name}: ✅ 已启用")
-        
-        if not self.downloaders:
-            status_lines.append("• 暂无可用下载器")
-        
-        # 下载队列状态
-        q = self.download_queue
-        qs = q.get_status()
-        status_lines.append(f"\n📥 *下载队列*")
-        status_lines.append(f"• 最大并发: {qs['max_concurrent']}")
-        status_lines.append(f"• 排队中: {qs['pending']}")
-        status_lines.append(f"• 执行中: {qs['active']}")
-        status_lines.append(f"• 已完成: {qs['completed']}")
-        status_lines.append(f"• 失败: {qs['failed']}")
-        
-        await update.message.reply_text('\n'.join(status_lines), parse_mode=ParseMode.MARKDOWN)
-    
+            _, label = ui.platform_label(name)
+            note = ''
+            ready = True
+            if name == 'netease':
+                logged_in = bool(getattr(downloader, 'logged_in', False))
+                ready = True  # 未登录也能下部分公开内容，只提示不报错
+                note = '已登录' if logged_in else '未登录'
+            platforms.append({'label': label, 'ready': ready, 'note': note})
+
+        try:
+            queue = self.download_queue.get_status()
+        except Exception:  # noqa: BLE001
+            queue = {}
+
+        try:
+            library = self.config_manager.get_library_stats()
+        except Exception:  # noqa: BLE001
+            library = {'bytes': 0, 'files': 0, 'missing': []}
+
+        try:
+            stats = self.config_manager.get_history_stats()
+        except Exception:  # noqa: BLE001
+            stats = {'today': 0, 'total': 0}
+
+        note = ''
+        meta = {}
+        try:
+            meta = get_keeper(self.config_manager).get_meta()
+            if str(meta.get('state', '')).lower() in ('expired', 'invalid'):
+                note = '网易云登录态已失效，发送 /cookie 或到后台「账号」页重新登录'
+        except Exception:  # noqa: BLE001
+            pass
+
+        return {
+            'platforms': platforms,
+            'queue': queue,
+            'library': library,
+            'stats': stats,
+            'netease': meta,
+            'note': note,
+        }
+
     async def handle_queue(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理 /queue 命令 - 查看下载队列状态"""
         user = update.message.from_user
         if not self.check_allowed_user(user.id):
-            await update.message.reply_text("⚠️ 您没有权限使用此命令")
+            await ui.send(update.message, ui.Renderer.error_card('没有使用权限', '不在白名单里'))
             return
-        
-        qs = self.download_queue.get_status()
-        
-        lines = ["📥 *下载队列状态*\n"]
-        lines.append(f"最大并发: `{qs['max_concurrent']}`")
-        lines.append(f"排队中: `{qs['pending']}` | 执行中: `{qs['active']}`")
-        lines.append(f"已完成: `{qs['completed']}` | 失败: `{qs['failed']}`")
-        
-        tasks = qs.get('tasks', [])
-        if tasks:
-            lines.append("\n*最近任务:*")
-            for t in tasks[:10]:
-                status_icon = {'pending':'⏳','running':'▶️','retrying':'🔄','completed':'✅','failed':'❌'}.get(t['status'],'❓')
-                lines.append(f"{status_icon} `{t['platform']}/{t['content_type']}` `{t['content_id']}` — 重试:{t['retry_count']}/{t['max_retries']}")
-                if t['last_error']:
-                    lines.append(f"  _错误: {t['last_error'][:80]}_")
-        else:
-            lines.append("\n_暂无任务记录_")
-        
-        await update.message.reply_text('\n'.join(lines), parse_mode=ParseMode.MARKDOWN)
-    
+
+        await ui.send(
+            update.message,
+            ui.Renderer.queue_card(self.download_queue.get_status()),
+            keyboard=self._refresh_keyboard('queue'),
+        )
+
     async def handle_history(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """处理 /history 命令 - 显示下载历史"""
-        history = self.config_manager.get_download_history(limit=20)
-        
-        if not history:
-            await update.message.reply_text("📭 暂无下载历史")
+        """处理 /history 命令 - 分页显示下载历史"""
+        user = update.message.from_user
+        if not self.check_allowed_user(user.id):
+            await ui.send(update.message, ui.Renderer.error_card('没有使用权限', '不在白名单里'))
             return
-        
-        lines = ["📜 *最近下载历史*\n"]
-        
-        for i, item in enumerate(history, 1):
-            platform = item.get('platform', '未知')
-            content_type = item.get('content_type', '')
-            title = item.get('title', '未知')
-            artist = item.get('artist', '')
-            created_at = item.get('created_at', '')[:16]  # 只显示日期和时间
-            
-            # 平台图标
-            platform_icon = {'netease': '🎵', 'apple_music': '🍎'}.get(platform, '📀')
-            type_icon = {'song': '🎵', 'album': '💿', 'playlist': '📋'}.get(content_type, '📁')
-            
-            lines.append(f"{i}. {platform_icon}{type_icon} *{title}*")
-            if artist:
-                lines.append(f"   _{artist}_")
-            lines.append(f"   🕐 {created_at}\n")
-        
-        await update.message.reply_text('\n'.join(lines), parse_mode=ParseMode.MARKDOWN)
+
+        page = 1
+        if context.args:
+            try:
+                page = max(1, int(context.args[0]))
+            except (TypeError, ValueError):
+                page = 1
+
+        text, keyboard = self._render_history_page(page)
+        await ui.send(update.message, text, keyboard=keyboard)
+
+    HISTORY_PAGE_SIZE = 8
+
+    def _render_history_page(self, page: int):
+        """渲染历史某一页。返回 (文本, 键盘)。"""
+        per_page = self.HISTORY_PAGE_SIZE
+        page = max(1, page)
+
+        total = self.config_manager.get_history_stats().get('total', 0)
+        if total <= 0:
+            return ui.Renderer.history_card([], 1, 1, 0), None
+
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        page = min(page, total_pages)
+
+        # 没有分页版的查询接口，只能按页大小取。页数多了之后这里会变成
+        # 取 limit 再切片——数据量到那个级别再说，现在没必要加复杂度。
+        rows = self.config_manager.get_download_history(limit=total_pages * per_page)
+        start = (page - 1) * per_page
+        window = rows[start:start + per_page]
+
+        return (
+            ui.Renderer.history_card(window, page, total_pages, total),
+            self._history_keyboard(page, total_pages),
+        )
+
+    async def handle_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理 /id 命令 - 显示自己的 Telegram ID（配置白名单时用）"""
+        user = update.message.from_user
+        chat = update.message.chat
+        lines = [
+            f'🆔 {ui.b("你的信息")}',
+            '',
+            f'用户 ID：{ui.code(user.id)}',
+            f'会话 ID：{ui.code(chat.id)}',
+        ]
+        if user.username:
+            lines.append(f'用户名：@{ui.esc(user.username)}')
+        lines.extend([
+            '',
+            ui.it('把用户 ID 填进后台「Telegram → 允许的用户」就能限制只有你能用。'),
+        ])
+        await ui.send(update.message, '\n'.join(lines))
+
+    async def handle_cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理 /cancel 命令 - 取消自己在跑/排队的任务"""
+        user = update.message.from_user
+        if not self.check_allowed_user(user.id):
+            await ui.send(update.message, ui.Renderer.error_card('没有使用权限', '不在白名单里'))
+            return
+
+        cancelled = 0
+        for task in self.download_queue.get_all_tasks():
+            if task.status.name in ('PENDING', 'RUNNING', 'RETRYING'):
+                if self.download_queue.cancel(task.task_id):
+                    cancelled += 1
+
+        if cancelled:
+            text = f'⏹ {ui.b("已取消")} {ui.code(cancelled)} 个任务\n\n{ui.it("已下载的部分保留断点，重新发链接会接着下。")}'
+        else:
+            text = f'{ui.it("当前没有进行中的任务。")}'
+        await ui.send(update.message, text)
 
     async def handle_cookie(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """处理 /cookie 命令 - 更新网易云 cookies"""
+        """处理 /cookie 命令 - 查看/更新网易云登录态"""
         user = update.message.from_user
         logger.info(f"📨 收到 /cookie 命令: 用户={user.id}({user.username})")
-        
-        # 检查用户权限
+
         if not self.check_allowed_user(user.id):
-            await update.message.reply_text("⚠️ 您没有权限使用此命令")
+            await ui.send(update.message, ui.Renderer.error_card('没有使用权限', '不在白名单里'))
             return
-        
-        # 获取参数
-        args = context.args if context.args else []
-        
+
+        args = context.args or []
+
         if not args:
-            # 没有参数，显示使用说明和当前状态
-            current_cookies = self._cfg('netease_cookies', '')
-            has_cookies = bool(current_cookies)
-            
-            # 检查登录状态
-            login_status = "未知"
-            if 'netease' in self.downloaders:
-                downloader = self.downloaders['netease']
-                if hasattr(downloader, 'logged_in') and downloader.logged_in:
-                    nickname = getattr(downloader, 'user_info', {}).get('nickname', '未知')
-                    login_status = f"✅ 已登录 ({nickname})"
-                elif has_cookies:
-                    login_status = "⚠️ cookies 可能已失效"
-                else:
-                    login_status = "❌ 未配置 cookies"
-            
-            msg = (
-                "🍪 *网易云 Cookie 管理*\n\n"
-                f"*当前状态:* {login_status}\n"
-                f"*Cookies:* {'已配置' if has_cookies else '未配置'}\n\n"
-                "*使用方法:*\n"
-                "`/cookie <cookies字符串>`\n\n"
-                "*如何获取 Cookies:*\n"
-                "1. 打开 music.163.com 并登录\n"
-                "2. 按 F12 打开开发者工具\n"
-                "3. 切换到 Application/存储 标签\n"
-                "4. 找到 Cookies → music.163.com\n"
-                "5. 复制 `MUSIC_U` 的值\n"
-                "6. 发送: `/cookie MUSIC_U=你的值`\n\n"
-                "*或者复制完整 cookies:*\n"
-                "在 Console 中执行 `document.cookie` 并复制结果"
+            await ui.send(
+                update.message,
+                self._cookie_help_text(),
+                keyboard=self._cookie_keyboard(),
             )
-            await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
             return
-        
-        # 有参数，更新 cookies
+
         new_cookies = ' '.join(args)
-        
-        # 验证 cookies 格式
         if '=' not in new_cookies and not new_cookies.startswith('{'):
-            await update.message.reply_text(
-                "❌ *Cookies 格式错误*\n\n"
-                "正确格式示例:\n"
-                "• `MUSIC_U=xxx; __csrf=xxx`\n"
-                "• `{\"MUSIC_U\": \"xxx\"}`",
-                parse_mode=ParseMode.MARKDOWN
-            )
+            await ui.send(update.message, ui.Renderer.error_card(
+                'Cookie 格式不对',
+                '既没有 key=value，也不是 JSON',
+                '正确示例：MUSIC_U=xxxx; __csrf=yyyy',
+            ))
             return
-        
-        # 保存 cookies
+
+        await ui.send(update.message, f'⏳ 正在校验 Cookie…')
         try:
             self.config_manager.set_config('netease_cookies', new_cookies)
-            
-            # 更新当前配置
             self.config['netease_cookies'] = new_cookies
-            
-            # 重新初始化网易云下载器以加载新 cookies
-            if 'netease' in self.downloaders:
-                try:
-                    self.downloaders['netease'] = NeteaseDownloader(self.config_manager)
-                    downloader = self.downloaders['netease']
-                    
-                    # 检查新的登录状态
-                    if hasattr(downloader, 'logged_in') and downloader.logged_in:
-                        nickname = getattr(downloader, 'user_info', {}).get('nickname', '未知')
-                        vip_type = getattr(downloader, 'user_info', {}).get('vipType', 0)
-                        vip_str = '黑胶VIP' if vip_type == 11 else ('普通VIP' if vip_type > 0 else '普通用户')
-                        
-                        await update.message.reply_text(
-                            f"✅ *Cookies 更新成功！*\n\n"
-                            f"👤 用户: {nickname}\n"
-                            f"💎 会员: {vip_str}",
-                            parse_mode=ParseMode.MARKDOWN
-                        )
-                        logger.info(f"✅ 用户 {user.id} 更新了网易云 cookies，登录用户: {nickname}")
-                    else:
-                        await update.message.reply_text(
-                            "⚠️ *Cookies 已保存，但验证失败*\n\n"
-                            "可能原因:\n"
-                            "• Cookies 已过期\n"
-                            "• 格式不正确\n"
-                            "• 网络问题\n\n"
-                            "请检查 cookies 是否正确",
-                            parse_mode=ParseMode.MARKDOWN
-                        )
-                        logger.warning(f"⚠️ 用户 {user.id} 更新了 cookies，但验证失败")
-                except Exception as e:
-                    logger.error(f"❌ 重新初始化网易云下载器失败: {e}")
-                    await update.message.reply_text(
-                        f"⚠️ *Cookies 已保存，但下载器重新加载失败*\n\n"
-                        f"错误: {str(e)[:100]}",
-                        parse_mode=ParseMode.MARKDOWN
-                    )
+
+            downloader = self.downloaders.get('netease')
+            if not downloader:
+                await ui.send(update.message, ui.Renderer.error_card(
+                    'Cookie 已保存',
+                    '网易云下载器没启用',
+                    '到后台「设置」里启用网易云音乐下载器',
+                ))
+                return
+
+            if hasattr(downloader, 'reload_config'):
+                downloader.reload_config()
+
+            if getattr(downloader, 'logged_in', False):
+                info = getattr(downloader, 'user_info', {}) or {}
+                nickname = info.get('nickname') or '未知'
+                vip_type = info.get('vipType') or 0
+                vip_str = '黑胶 VIP' if vip_type == 11 else ('VIP' if vip_type > 0 else '普通用户')
+
+                lines = [
+                    f'✅ {ui.b("登录成功")}',
+                    '',
+                    f'👤 {ui.esc(nickname)}',
+                    f'💎 {ui.esc(vip_str)}',
+                    '',
+                    ui.it('已开启自动续期，之后过期会自动用 token 续，不用再手动贴。'),
+                ]
+                await ui.send(update.message, '\n'.join(lines))
+                logger.info(f"✅ 用户 {user.id} 更新了网易云 cookies，登录用户: {nickname}")
             else:
-                await update.message.reply_text(
-                    "✅ *Cookies 已保存*\n\n"
-                    "⚠️ 网易云下载器未启用，请在设置中启用",
-                    parse_mode=ParseMode.MARKDOWN
-                )
-                
+                await ui.send(update.message, ui.Renderer.error_card(
+                    'Cookie 已保存，但校验没过',
+                    '登录态无效（多为已过期或复制不全）',
+                    '重新复制完整的 MUSIC_U；或者到后台「账号」页扫码登录，更省事',
+                ))
+                logger.warning(f"⚠️ 用户 {user.id} 更新了 cookies，但校验失败")
+
         except Exception as e:
-            logger.error(f"❌ 保存 cookies 失败: {e}")
-            await update.message.reply_text(
-                f"❌ *保存失败*\n\n错误: {str(e)[:100]}",
-                parse_mode=ParseMode.MARKDOWN
-            )
+            logger.exception(f"❌ 保存 cookies 失败: {e}")
+            await ui.send(update.message, ui.Renderer.error_card('保存 Cookie 失败', e))
+
+    def _cookie_help_text(self) -> str:
+        """Cookie 页。优先引导去后台扫码——让用户手抠 cookie 是很差的体验。"""
+        status = '❔ 未知'
+        nickname = ''
+        try:
+            downloader = self.downloaders.get('netease')
+            meta = get_keeper(self.config_manager).get_meta()
+            status = ui.Renderer.netease_block(meta)
+            nickname = meta.get('nickname') or ''
+        except Exception:  # noqa: BLE001
+            if self.downloaders.get('netease') and getattr(self.downloaders['netease'], 'logged_in', False):
+                status = '✅ 已登录'
+
+        web_url = str(self._cfg('web_ui_url', '') or '').strip()
+        lines = [
+            f'🍪 {ui.b("网易云账号")}',
+            '',
+            f'{ui.b("当前状态")}',
+            f'  {status}' + (f' · {ui.esc(nickname)}' if nickname else ''),
+            '',
+            f'{ui.b("推荐做法")}',
+            f'  去后台「账号」页点扫码登录，30 秒搞定，登录态到期会自动续。',
+        ]
+        if web_url.startswith('http'):
+            lines.append(f'  {ui.code(web_url)}')
+        lines.extend([
+            '',
+            f'{ui.b("或者手动贴 Cookie")}',
+            f'  {ui.code("/cookie MUSIC_U=xxxx; __csrf=yyyy")}',
+            '',
+            ui.it('注意：Cookie 会存进本地数据库，别在群里发。'),
+        ])
+        return '\n'.join(lines)
+
+    def _cookie_keyboard(self):
+        rows = []
+        web_url = str(self._cfg('web_ui_url', '') or '').strip()
+        if web_url.startswith('http'):
+            rows.append([InlineKeyboardButton('🌐 去后台扫码登录', url=f'{web_url.rstrip("/")}/account')])
+        rows.append([InlineKeyboardButton('🔄 重新检查', callback_data=self._register_action('cookie'))])
+        return InlineKeyboardMarkup(rows)
+
 
     def get_download_path_for_platform(self, platform: str) -> str:
         """获取平台专属的下载路径"""
@@ -379,7 +507,7 @@ class MusicBot:
     async def _safe_handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """带超时保护的消息处理包装器
 
-        注意：这里的超时只保护"解析链接 + 入队"这段，不再覆盖整个下载过程。
+        这里的超时只保护"解析链接 + 入队"这段，不覆盖下载过程。
         下载已改成后台任务（见 _spawn_download），所以用 handler_timeout
         （默认 60s）就够；旧实现用 download_timeout 是同一件事的两个默认值
         打架，最终永远走 600s。
@@ -392,121 +520,186 @@ class MusicBot:
         except asyncio.TimeoutError:
             logger.error("❌ 消息处理超时")
             if update.message:
-                try:
-                    await update.message.reply_text("❌ 处理超时，请重试")
-                except Exception:
-                    pass
+                await ui.send(update.message, ui.Renderer.error_card(
+                    '处理超时', '解析链接超时', '稍等一下再发一次；如果一直这样，看看后台日志'))
         except Exception as e:
             logger.exception(f"❌ 消息处理异常: {e}")
             if update.message:
-                try:
-                    await update.message.reply_text(f"❌ 处理出错: {str(e)[:100]}")
-                except Exception:
-                    pass
+                await ui.send(update.message, ui.Renderer.error_card('处理出错', e))
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理消息"""
         if not update.message or not update.message.text:
             return
-        
+
         user = update.message.from_user
         text = update.message.text.strip()
-        
-        # 记录收到的消息
+
         logger.info(f"📨 收到消息: 用户={user.id}({user.username}), 内容={text[:50]}...")
-        
-        # 检查用户权限
+
         if not self.check_allowed_user(user.id):
             logger.warning(f"⚠️ 用户 {user.id} 不在允许列表中")
+            await ui.send(update.message, ui.Renderer.error_card(
+                '没有使用权限',
+                '当前账号不在白名单里',
+                f'把你的 ID {user.id} 发给管理员加白名单',
+            ))
             return
-        
-        # 检查是否是链接
-        if not ('http://' in text or 'https://' in text or 'music.163.com' in text):
-            logger.debug(f"📝 消息不是链接，已忽略")
-            return
-        
-        # 提取 URL
+
         url = self._extract_url(text)
         if not url:
-            await update.message.reply_text("❌ 无法识别链接")
+            # 私聊里发了一段不像链接的话，别装死——旧版直接 return，
+            # 用户以为机器人挂了。群聊里则保持安静，避免刷屏。
+            if update.message.chat.type == 'private' and len(text) >= 2:
+                await self._maybe_hint_no_link(update.message, user.id)
+            logger.debug("📝 消息里没有链接，已忽略")
             return
-        
-        # 获取对应的下载器
+
         result = self.get_downloader_for_url(url)
         if not result:
-            await update.message.reply_text("❌ 不支持此链接")
+            await ui.send(update.message, ui.Renderer.error_card(
+                '这个链接暂时不支持',
+                '没匹配到可用的下载器',
+                '目前支持网易云音乐（歌曲/专辑/歌单）和 Apple Music（歌曲/专辑）',
+            ))
             return
-        
+
         downloader_name, downloader = result
-        
-        # 解析 URL
+
         parsed = downloader.parse_url(url)
         if not parsed:
-            await update.message.reply_text("❌ 无法解析链接")
+            await ui.send(update.message, ui.Renderer.error_card(
+                '链接解析失败',
+                '看懂了平台，但认不出具体是哪首歌',
+                '用 App 里的「分享 → 复制链接」重新拿一次，别手动改参数',
+            ))
             return
-        
+
         content_type = parsed.get('type')
         content_id = parsed.get('id')
-        
-        # 检查是否已下载过
+
         existing = self.config_manager.check_download_exists(downloader_name, content_type, content_id)
         if existing:
-            # 已下载过，询问是否重新下载
-            download_time = existing.get('created_at', '未知时间')
-            title = existing.get('title', '未知')
-            
-            keyboard = [
-                [
-                    InlineKeyboardButton("✅ 重新下载", callback_data=f"redownload:{downloader_name}:{content_type}:{content_id}"),
-                    InlineKeyboardButton("❌ 取消", callback_data="cancel_download")
-                ]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await update.message.reply_text(
-                f"⚠️ 此内容之前已下载过\n\n"
-                f"📀 {title}\n"
-                f"📍 平台: {downloader_name}\n"
-                f"🕐 下载时间: {download_time}\n\n"
-                f"是否重新下载？",
-                reply_markup=reply_markup
+            title = existing.get('title') or '未知'
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    '✅ 重新下载',
+                    callback_data=self._register_action(
+                        'redownload', (downloader_name, content_type, content_id)),
+                ),
+                InlineKeyboardButton(
+                    '❌ 算了',
+                    callback_data=self._register_action('noop'),
+                ),
+            ]])
+            await ui.send(
+                update.message,
+                ui.Renderer.duplicate_found(title, downloader_name, existing.get('created_at')),
+                keyboard=keyboard,
             )
             return
-        
-        # 未下载过，直接开始下载（后台执行，不阻塞后续消息）
+
         self._spawn_download(update.message, downloader_name, downloader, content_type, content_id)
-    
+
+    async def _maybe_hint_no_link(self, message, user_id: int):
+        """私聊里没找到链接时给一次提示，30 秒内不重复。"""
+        now = time.time()
+        if now - self._hint_at.get(user_id, 0) < 30:
+            return
+        self._hint_at[user_id] = now
+        await ui.send(message, '\n'.join([
+            f'🤔 {ui.b("没看到链接")}',
+            '',
+            '直接把歌曲 / 专辑 / 歌单的分享链接发过来就行，例如：',
+            ui.code('https://music.163.com/song?id=1234567'),
+            '',
+            f'{ui.it("不确定有什么命令的话，发 /start 看看。")}',
+        ]))
+
     async def handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理回调查询（按钮点击）"""
         query = update.callback_query
-        await query.answer()
-        
-        data = query.data
-        
-        if data == "cancel_download":
-            await query.edit_message_text("❌ 已取消下载")
+        data = query.data or ''
+
+        # ---- 兼容升级前留在聊天记录里的旧按钮 ----
+        if data == 'cancel_download':
+            await query.answer('已取消')
+            await ui.edit(query.message, f'{ui.it("已取消。")}')
             return
-        
-        if data.startswith("redownload:"):
-            # 解析重新下载的数据
-            parts = data.split(":")
+        if data.startswith('redownload:'):
+            parts = data.split(':')
+            await query.answer()
             if len(parts) == 4:
                 _, downloader_name, content_type, content_id = parts
-                
-                # 获取下载器
                 downloader = self.downloaders.get(downloader_name)
                 if downloader:
-                    await query.edit_message_text(f"🔄 开始重新下载...")
-                    self._spawn_download(query.message, downloader_name, downloader, content_type, content_id, is_redownload=True)
+                    await ui.edit(query.message, f'🔄 {ui.b("重新下载")}\n\n{ui.it("已加入队列，下面这条是进度。")}')
+                    self._spawn_download(query.message, downloader_name, downloader,
+                                         content_type, content_id, is_redownload=True)
                 else:
-                    await query.edit_message_text("❌ 下载器不可用")
+                    await ui.edit(query.message, ui.Renderer.error_card('下载器不可用', f'找不到 {downloader_name}'))
             return
+
+        action, payload = self._resolve_action(data)
+        if action is None:
+            # 按钮存在但短码已经过期（重启后内存表清空）
+            await query.answer('这个按钮已过期，重新发一次链接吧', show_alert=True)
+            return
+
+        try:
+            if action == 'noop':
+                await query.answer('好的')
+                return
+
+            await query.answer()
+
+            if action == 'status':
+                await ui.edit(query.message, ui.Renderer.status_card(self._build_status_data()),
+                              keyboard=self._refresh_keyboard('status'))
+
+            elif action == 'queue':
+                await ui.edit(query.message, ui.Renderer.queue_card(self.download_queue.get_status()),
+                              keyboard=self._refresh_keyboard('queue'))
+
+            elif action == 'history':
+                text, keyboard = self._render_history_page(int(payload or 1))
+                await ui.edit(query.message, text, keyboard=keyboard)
+
+            elif action == 'cookie':
+                await ui.edit(query.message, self._cookie_help_text(), keyboard=self._cookie_keyboard())
+
+            elif action == 'cancel':
+                ok = self.download_queue.cancel(str(payload))
+                await query.answer('已请求取消' if ok else '这个任务已经结束了', show_alert=not ok)
+                if ok:
+                    await ui.edit(query.message, '\n'.join([
+                        f'⏹ {ui.b("已取消")}',
+                        '',
+                        ui.it('已下载的部分留在 .part 文件里，重新发链接可以续传。'),
+                    ]))
+
+            elif action == 'redownload':
+                downloader_name, content_type, content_id = payload
+                downloader = self.downloaders.get(downloader_name)
+                if not downloader:
+                    await ui.edit(query.message, ui.Renderer.error_card('下载器不可用', f'找不到 {downloader_name}'))
+                    return
+                await ui.edit(query.message, f'🔄 {ui.b("重新下载")}\n\n{ui.it("已加入队列。")}')
+                self._spawn_download(query.message, downloader_name, downloader,
+                                     content_type, content_id, is_redownload=True)
+
+        except Exception as e:
+            logger.exception(f"❌ 处理按钮回调失败: {e}")
+            try:
+                await ui.edit(query.message, ui.Renderer.error_card('操作失败', e))
+            except Exception:  # noqa: BLE001
+                pass
 
     def _spawn_download(self, message, downloader_name: str, downloader,
                         content_type: str, content_id: str, is_redownload: bool = False):
         """把下载丢到后台执行，handler 立即返回。
 
-        这是 concurrent_updates(True) 之外的另一半：即便允许并发处理更新，
+        这是 concurrent_updates(8) 之外的另一半：即便允许并发处理更新，
         只要 handler 里 await 到下载结束，这个 handler 就一直占着。
         改成提交即返回后，同一个人连发多个链接、或者别人中途发 /status，
         都不会被前一个下载堵住；真正的并发上限由 DownloadQueue 的信号量控制。
@@ -518,176 +711,177 @@ class MusicBot:
         )
         self._bg_tasks.add(task)
         task.add_done_callback(self._bg_tasks.discard)
-    
-    async def _do_download(self, message, downloader_name: str, downloader, content_type: str, content_id: str, is_redownload: bool = False):
+
+    async def _do_download(self, message, downloader_name: str, downloader,
+                           content_type: str, content_id: str, is_redownload: bool = False):
         """执行下载任务（通过下载队列，支持并发控制和重试）"""
-        import uuid
-        
-        # 发送处理中消息
-        start_msg = MessageTemplates.download_started(downloader_name, content_type, content_id, is_redownload)
-        progress_msg = await message.reply_text(start_msg)
-        
+        download_dir = self.get_download_path_for_platform(downloader_name)
+        main_loop = asyncio.get_running_loop()
+        task_id = f"{downloader_name}_{content_id}_{uuid.uuid4().hex[:8]}"
+
+        # 进度卡片：一条消息滚动更新，自带「取消」按钮
+        card = ui.ProgressCard(
+            min_interval=self._cfg('telegram_progress_interval', 1.0),
+            cancel_data=self._register_action('cancel', task_id),
+        )
+        card.platform = downloader_name
+        card.content_type = content_type
+        card.content_id = content_id
+        card.set_queued(0)
+
+        progress_msg = await ui.send(message, card.render(), keyboard=card.keyboard())
+        if progress_msg is None:
+            logger.error("❌ 进度消息发送失败，放弃本次下载")
+            return
+        card.attach(progress_msg)
+
+        # 取消信号：下载线程和队列之间唯一的通信渠道
+        task_cancel_event = threading.Event()
+
+        # 进度回调是下载线程里同步调的，这里只做两件事：
+        # 1) 把数据喂给卡片（纯内存操作）
+        # 2) 过了节流窗口才往主循环排一次渲染
+        last_scheduled = [0.0]
+        min_interval = card.min_interval
+        # 设置里关掉「推送下载进度」后，只保留起始卡和最终结果，
+        # 中间不再刷同一条消息——省 API 调用，也方便只想看结果的人。
+        progress_enabled = bool(self._cfg('telegram_notify_progress', True))
+
+        def progress_callback(progress_info):
+            try:
+                card.feed(progress_info)
+            except Exception:  # noqa: BLE001
+                return
+            if not progress_enabled:
+                return
+            now = time.time()
+            if now - last_scheduled[0] < min_interval:
+                return
+            last_scheduled[0] = now
+            try:
+                asyncio.run_coroutine_threadsafe(card.push(), main_loop)
+            except RuntimeError:
+                pass
+
+        async def run_download_async():
+            """在线程池中执行下载（供队列调用）"""
+            def run_download():
+                try:
+                    if hasattr(downloader, 'reload_config'):
+                        downloader.reload_config()
+
+                    kwargs = {
+                        'progress_callback': progress_callback,
+                        'cancel_check': task_cancel_event.is_set,
+                    }
+                    if content_type == 'song':
+                        return downloader.download_song(content_id, download_dir, **kwargs)
+                    if content_type == 'album':
+                        return downloader.download_album(content_id, download_dir, **kwargs)
+                    if content_type == 'playlist':
+                        return downloader.download_playlist(content_id, download_dir, **kwargs)
+                    return {'success': False, 'error': f'不支持的类型: {content_type}', 'retryable': False}
+                except DownloadCancelled:
+                    raise
+                except Exception as e:
+                    logger.error(f"下载线程异常: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    return {'success': False, 'error': str(e)}
+
+            return await asyncio.to_thread(run_download)
+
+        task = DownloadTask(
+            task_id=task_id,
+            coroutine_func=run_download_async,
+            platform=downloader_name,
+            content_type=content_type,
+            content_id=content_id,
+            max_retries=self.download_max_retries,
+        )
+        task.cancel_event = task_cancel_event
+
+        watcher = None
         try:
-            # 使用平台专属下载路径
-            download_dir = self.get_download_path_for_platform(downloader_name)
-            
-            # 获取当前事件循环
-            main_loop = asyncio.get_running_loop()
-            
-            # 为每个下载任务创建独立的通知器实例（避免并发任务进度串写）
-            update_interval = self._cfg('telegram_progress_interval', 1.0)
-            task_notifier = TelegramNotifier(update_interval)
-            task_notifier.set_main_loop(main_loop)
-            task_notifier.set_message(progress_msg)
-            
-            # 确定下载类型
-            download_type = {
-                'song': DownloadType.SONG,
-                'album': DownloadType.ALBUM,
-                'playlist': DownloadType.PLAYLIST
-            }.get(content_type, DownloadType.SONG)
-            
-            # 创建进度回调
-            progress_callback = task_notifier.create_progress_callback(download_type)
-            
-            # 定义异步下载函数（在线程中执行实际下载）
-            async def run_download_async():
-                """在线程池中执行下载（供队列调用）"""
-                def run_download():
-                    try:
-                        if hasattr(downloader, 'reload_config'):
-                            downloader.reload_config()
-                        if content_type == 'song':
-                            return downloader.download_song(
-                                content_id, download_dir,
-                                progress_callback=progress_callback
-                            )
-                        elif content_type == 'album':
-                            return downloader.download_album(
-                                content_id, download_dir,
-                                progress_callback=progress_callback
-                            )
-                        elif content_type == 'playlist':
-                            return downloader.download_playlist(
-                                content_id, download_dir,
-                                progress_callback=progress_callback
-                            )
-                        else:
-                            return {'success': False, 'error': f'不支持的类型: {content_type}'}
-                    except Exception as e:
-                        logger.error(f"下载线程异常: {e}")
-                        import traceback
-                        logger.error(traceback.format_exc())
-                        return {'success': False, 'error': str(e)}
-                
-                return await asyncio.to_thread(run_download)
-            
-            # 创建下载任务
-            task_id = f"{downloader_name}_{content_id}_{uuid.uuid4().hex[:8]}"
-            task = DownloadTask(
-                task_id=task_id,
-                coroutine_func=run_download_async,
-                platform=downloader_name,
-                content_type=content_type,
-                content_id=content_id,
-                max_retries=self.download_max_retries,
-            )
-            
-            # 确保队列已启动
             if not self.download_queue.is_running():
                 await self.download_queue.start()
-            
-            # 提交到队列并等待完成
+
             self.download_queue.enqueue(task)
             logger.info(f"🚀 任务已入队: {task_id}")
-            
+
+            # 排队阶段单独刷新，让用户知道"前面还有几个"，别以为卡死了
+            watcher = asyncio.create_task(self._watch_queue_position(card, task))
+
             try:
                 download_timeout = self._cfg('download_timeout', 1800)
                 result = await asyncio.wait_for(task._future, timeout=download_timeout)
             except asyncio.TimeoutError:
-                # 超时只是不再等，任务还在队列里跑；这里主动取消，
-                # 避免用户看到"超时"而后台其实还在下载（旧行为）
                 logger.error(f"⏱️ 下载超时: {task_id}")
                 self.download_queue.cancel(task_id)
                 result = {'success': False, 'error': f'下载超时（{download_timeout}s）'}
             except asyncio.CancelledError:
                 self.download_queue.cancel(task_id)
                 raise
+            except DownloadCancelled:
+                result = {'success': False, 'cancelled': True, 'error': '已取消'}
             except Exception as e:
                 logger.error(f"❌ 下载任务异常: {e}")
                 result = {'success': False, 'error': str(e)}
-            
-            # 等待一小段时间，确保最后的进度更新完成
-            await asyncio.sleep(0.5)
-            
-            # 处理结果
-            if result.get('success'):
-                logger.info(f"📝 准备更新完成消息...")
-                
-                # 保存下载历史
-                self._save_download_history(downloader_name, content_type, content_id, result, download_dir)
-                
-                # 使用通知模块格式化完成消息
-                success_msg = TelegramNotifier.format_result(result, content_type, downloader_name)
-                
-                try:
-                    await progress_msg.edit_text(success_msg)
-                    logger.info(f"✅ 消息更新成功")
-                except Exception as e:
-                    logger.error(f"❌ 编辑消息失败: {e}")
-            else:
-                error_msg = MessageTemplates.download_error(result.get('error', '未知错误'))
-                try:
-                    await progress_msg.edit_text(error_msg)
-                except Exception as e:
-                    logger.error(f"❌ 编辑失败消息失败: {e}")
-            
-        except Exception as e:
-            logger.error(f"下载错误: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            try:
-                await progress_msg.edit_text(f"❌ 下载出错: {str(e)}")
-            except Exception:
-                pass
-    
-    def _save_download_history(self, platform: str, content_type: str, content_id: str, result: Dict[str, Any], download_dir: str):
-        """保存下载历史记录"""
-        try:
-            if content_type == 'song':
-                self.config_manager.add_download_history(
-                    platform=platform,
-                    content_type=content_type,
-                    content_id=content_id,
-                    title=result.get('song_title', '未知'),
-                    artist=result.get('song_artist', '未知'),
-                    file_path=result.get('filepath', ''),
-                    file_size=int(result.get('size_mb', 0) * 1024 * 1024),
-                    quality=result.get('quality', '')
-                )
-            elif content_type in ['album', 'playlist']:
-                songs_list = result.get('songs', [])
-                success_songs = [s for s in songs_list if s.get('success')]
-                title = result.get('album_name', result.get('playlist_title', '未知'))
-                artist_name = result.get('artist', '未知艺术家')
-                # file_size 存真实字节数（以前存的是曲目数，导致仪表盘的
-                # 「曲库容量」把专辑/歌单全漏掉，只下载专辑的用户永远显示 0 B）。
-                # 曲目数放在 quality 的 "n/m" 里，历史页已经这么显示了。
-                total_bytes = int(sum(float(s.get('size_mb') or 0) for s in success_songs) * 1024 * 1024)
 
-                self.config_manager.add_download_history(
-                    platform=platform,
-                    content_type=content_type,
-                    content_id=content_id,
-                    title=title,
-                    artist=artist_name,
-                    file_path=download_dir,
-                    file_size=total_bytes,
-                    quality=f"{len(success_songs)}/{result.get('total_songs', 0)}"
-                )
+            if watcher and not watcher.done():
+                watcher.cancel()
+
+            # 等最后一帧进度落盘，否则完成卡片会被迟到的进度帧盖掉
+            await asyncio.sleep(0.2)
+
+            if result.get('cancelled'):
+                card.mark('cancelled')
+                await ui.edit(progress_msg, card.render(), keyboard=None)
+                return
+
+            text = ui.Renderer.result_card(result, content_type, downloader_name)
+            if result.get('success'):
+                self._save_download_history(downloader_name, content_type, content_id, result, download_dir)
+                logger.info(f"✅ 下载完成: {task_id}")
+            else:
+                card.mark('failed')
+                logger.warning(f"❌ 下载失败: {task_id} - {result.get('error')}")
+
+            if not await ui.edit(progress_msg, text, keyboard=None):
+                # 编辑失败（例如消息太老）就补发一条，别让用户完全看不到结果
+                await ui.send(message, text)
+
         except Exception as e:
-            logger.error(f"保存下载历史失败: {e}")
-    
+            logger.exception(f"下载流程异常: {e}")
+            if watcher and not watcher.done():
+                watcher.cancel()
+            try:
+                await ui.edit(progress_msg, ui.Renderer.error_card('下载出错', e))
+            except Exception:  # noqa: BLE001
+                pass
+
+    async def _watch_queue_position(self, card, task):
+        """排队期间定期刷新「前面还有 N 个任务」。"""
+        try:
+            while task.status.name == 'PENDING':
+                position = self.download_queue.get_position(task.task_id) or 0
+                card.set_queued(position)
+                await card.push()
+                await asyncio.sleep(2.5)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"排队位次刷新结束: {e}")
+
+    def _save_download_history(self, platform: str, content_type: str, content_id: str, result: Dict[str, Any], download_dir: str):
+        """保存下载历史记录
+
+        具体字段处理收敛到 ConfigManager.record_download_result()，
+        和 Web 后台走同一份逻辑——以前只有 Bot 写历史，Web 触发的下载
+        跑完什么都不记，仪表盘对纯 Web 用户永远是 0。
+        """
+        self.config_manager.record_download_result(
+            platform, content_type, content_id, result, download_dir)
     def _extract_url(self, text: str) -> Optional[str]:
         """从文本中提取 URL"""
         import re
@@ -927,6 +1121,7 @@ class MusicBot:
                 await self.app.start()
                 await self.app.updater.start_polling(drop_pending_updates=True)
                 logger.info("✅ Telegram Bot 已启动")
+                await self._sync_bot_commands()
                 break
             except Exception as e:
                 retry_count += 1
@@ -992,14 +1187,40 @@ class MusicBot:
             except Exception as e:
                 logger.warning(f"重载网易云下载器失败: {e}")
     
+    # Bot 命令菜单。注册到 Telegram 之后，聊天框左下角会出一个菜单按钮，
+    # 不用再靠记忆敲命令——这是交互层面最省事的一处改进。
+    BOT_COMMANDS = [
+        ('start', '🏠 开始 / 使用说明'),
+        ('status', '📊 状态总览'),
+        ('queue', '📥 下载队列'),
+        ('history', '📜 下载历史'),
+        ('cookie', '🍪 网易云账号'),
+        ('cancel', '⏹ 取消我的任务'),
+        ('id', '🆔 我的 Telegram ID'),
+        ('help', '❓ 帮助'),
+    ]
+
+    async def _sync_bot_commands(self):
+        """把命令菜单同步给 Telegram（重复调用无副作用）。"""
+        if not self.app or not self.app.bot:
+            return
+        try:
+            commands = [BotCommand(name, desc) for name, desc in self.BOT_COMMANDS]
+            await self.app.bot.set_my_commands(commands)
+            logger.info(f"✅ 已同步 {len(commands)} 个命令到 Telegram 菜单")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"⚠️ 同步命令菜单失败（不影响使用）: {e}")
+
     def _register_handlers(self, app):
         """注册 Telegram 处理器（初始化与重建时复用）"""
         app.add_handler(CommandHandler('start', self.handle_start))
         app.add_handler(CommandHandler('help', self.handle_start))
         app.add_handler(CommandHandler('status', self.handle_status))
+        app.add_handler(CommandHandler('queue', self.handle_queue))
         app.add_handler(CommandHandler('history', self.handle_history))
         app.add_handler(CommandHandler('cookie', self.handle_cookie))
-        app.add_handler(CommandHandler('queue', self.handle_queue))
+        app.add_handler(CommandHandler('cancel', self.handle_cancel))
+        app.add_handler(CommandHandler('id', self.handle_id))
         app.add_handler(CallbackQueryHandler(self.handle_callback_query))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._safe_handle_message))
 
@@ -1137,6 +1358,7 @@ class MusicBot:
             await self.app.initialize()
             await self.app.start()
             await self.app.updater.start_polling(drop_pending_updates=False)
+            await self._sync_bot_commands()
             logger.info("✅ Application 完全重建成功")
         except Exception as e:
             logger.error(f"❌ Application 重建失败: {e}，将在下次健康检查时重试")

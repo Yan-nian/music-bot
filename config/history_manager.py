@@ -4,6 +4,7 @@
 下载历史管理 Mixin - 处理下载历史记录
 """
 
+import os
 import sqlite3
 import logging
 import datetime as dt
@@ -39,6 +40,82 @@ class HistoryManager:
             logger.error(f"❌ 添加下载历史失败: {e}")
             return False
     
+    def record_download_result(self, platform: str, content_type: str, content_id: str,
+                               result: Dict[str, Any], download_dir: str = '') -> bool:
+        """把一次下载结果写进历史表（Bot 与 Web 共用）。
+
+        以前这段逻辑只存在于 main.py 的 Bot 链路里，Web 后台触发的歌单同步、
+        重试任务跑完什么都不记，结果仪表盘的「累计下载 / 今日新增 / 曲库容量」
+        对只用 Web 的用户永远是 0。
+
+        返回是否真的写入了记录（合并成一个文件的多曲目录不写，靠扫盘统计容量）。
+        """
+        if not isinstance(result, dict) or not result.get('success'):
+            return False
+
+        try:
+            if content_type == 'song':
+                size_bytes = int(float(result.get('size_mb') or 0) * 1024 * 1024)
+                # size_mb 缺失时退回真实文件大小，别再写 0 进去
+                if not size_bytes:
+                    filepath = result.get('filepath') or ''
+                    if filepath and os.path.isfile(filepath):
+                        try:
+                            size_bytes = os.path.getsize(filepath)
+                        except OSError:
+                            size_bytes = 0
+                return self.add_download_history(
+                    platform=platform,
+                    content_type=content_type,
+                    content_id=content_id,
+                    title=result.get('song_title', '未知'),
+                    artist=result.get('song_artist', '未知'),
+                    file_path=result.get('filepath', ''),
+                    file_size=size_bytes,
+                    quality=result.get('quality', ''),
+                )
+
+            if content_type in ('album', 'playlist'):
+                songs_list = result.get('songs') or []
+                success_songs = [s for s in songs_list if isinstance(s, dict) and s.get('success')]
+                title = (result.get('album_name')
+                         or result.get('playlist_title')
+                         or result.get('album')
+                         or '未知')
+                artist_name = result.get('artist', '未知艺术家')
+
+                total_bytes = 0
+                for song in success_songs:
+                    size = int(float(song.get('size_mb') or 0) * 1024 * 1024)
+                    if not size:
+                        path = song.get('filepath') or ''
+                        if path and os.path.isfile(path):
+                            try:
+                                size = os.path.getsize(path)
+                            except OSError:
+                                size = 0
+                    total_bytes += size
+
+                total_songs = result.get('total_songs') or len(songs_list)
+
+                # 一条都没成功就别写一条「0 首」的垃圾记录
+                if not success_songs:
+                    return False
+
+                return self.add_download_history(
+                    platform=platform,
+                    content_type=content_type,
+                    content_id=content_id,
+                    title=title,
+                    artist=artist_name,
+                    file_path=download_dir,
+                    file_size=total_bytes,
+                    quality=f"{len(success_songs)}/{total_songs}",
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"❌ 记录下载历史失败: {e}")
+        return False
+
     def get_history_stats(self) -> Dict[str, int]:
         """全量统计（不按分页截断）
 

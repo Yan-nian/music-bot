@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional, Dict, List, Any, Callable
 
 from .base import BaseDownloader
+from .errors import DownloadCancelled
 from .netease_auth import NeteaseAuth, parse_cookie_string
 
 logger = logging.getLogger(__name__)
@@ -946,7 +947,8 @@ class NeteaseDownloader(BaseDownloader):
     def download_song(self, song_id: str, download_dir: str,
                      quality: str = None,
                      progress_callback: Optional[Callable] = None,
-                     extra_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                     extra_metadata: Optional[Dict[str, Any]] = None,
+                     cancel_check: Optional[Callable[[], bool]] = None) -> Dict[str, Any]:
         """下载单曲
         
         Args:
@@ -955,8 +957,11 @@ class NeteaseDownloader(BaseDownloader):
             quality: 音质
             progress_callback: 进度回调
             extra_metadata: 额外元数据（用于专辑下载时传递track_number等）
+            cancel_check: 取消检查回调，返回 True 时立刻中断（供下载队列用）
         """
         try:
+            if cancel_check and cancel_check():
+                raise DownloadCancelled()
             # 获取歌曲信息
             song_info = self.get_song_info(song_id)
             if not song_info:
@@ -1010,7 +1015,8 @@ class NeteaseDownloader(BaseDownloader):
             
             # 下载文件 - 传递文件名用于显示
             display_name = f"{song_info['name']} - {song_info['artist']}"
-            success = self._download_file(song_url_info['url'], filepath, progress_callback, display_name)
+            success = self._download_file(song_url_info['url'], filepath, progress_callback,
+                                           display_name, cancel_check=cancel_check)
             
             if success:
                 file_size = os.path.getsize(filepath) if os.path.exists(filepath) else 0
@@ -1065,13 +1071,19 @@ class NeteaseDownloader(BaseDownloader):
                 }
             
             return {'success': False, 'error': '下载失败'}
-            
+
+        except DownloadCancelled:
+            # 主动取消不是错误：标记出来让队列把状态归到 CANCELLED，且不重试
+            logger.info(f"⏹ 已取消下载: {song_id}")
+            raise
         except Exception as e:
             logger.error(f"❌ 下载歌曲失败: {e}")
             return {'success': False, 'error': str(e)}
+
     def download_album(self, album_id: str, download_dir: str,
                       quality: str = None,
-                      progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
+                      progress_callback: Optional[Callable] = None,
+                      cancel_check: Optional[Callable[[], bool]] = None) -> Dict[str, Any]:
         """下载专辑"""
         songs = self.get_album_songs(album_id)
         
@@ -1129,7 +1141,8 @@ class NeteaseDownloader(BaseDownloader):
                 return wrapped_callback
             
             album_callback = make_album_progress_callback(i, len(songs), song['name'], album_name)
-            result = self.download_song(song['id'], download_dir, quality, album_callback, extra_metadata)
+            result = self.download_song(song['id'], download_dir, quality, album_callback,
+                                        extra_metadata, cancel_check=cancel_check)
             results['songs'].append(result)
             
             if result.get('success'):
@@ -1146,7 +1159,8 @@ class NeteaseDownloader(BaseDownloader):
     
     def download_playlist(self, playlist_id: str, download_dir: str,
                          quality: str = None,
-                         progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
+                         progress_callback: Optional[Callable] = None,
+                         cancel_check: Optional[Callable[[], bool]] = None) -> Dict[str, Any]:
         """下载歌单"""
         songs, playlist_name = self.get_playlist_songs(playlist_id)
         
@@ -1200,7 +1214,8 @@ class NeteaseDownloader(BaseDownloader):
                 return wrapped_callback
             
             playlist_callback = make_playlist_progress_callback(i, len(songs), song['name'], playlist_name)
-            result = self.download_song(song['id'], download_dir, quality, playlist_callback, extra_metadata)
+            result = self.download_song(song['id'], download_dir, quality, playlist_callback,
+                                        extra_metadata, cancel_check=cancel_check)
             results['songs'].append(result)
             
             if result.get('success'):
@@ -1217,7 +1232,8 @@ class NeteaseDownloader(BaseDownloader):
     
     def download_playlist_incremental(self, playlist_id: str, download_dir: str,
                                       quality: str = None,
-                                      progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
+                                      progress_callback: Optional[Callable] = None,
+                                      cancel_check: Optional[Callable[[], bool]] = None) -> Dict[str, Any]:
         """增量下载歌单（只下载新增歌曲）
         
         Args:
@@ -1371,7 +1387,8 @@ class NeteaseDownloader(BaseDownloader):
                 return wrapped_callback
             
             incremental_callback = make_incremental_callback(i, len(new_songs), song['name'], playlist_name)
-            result = self.download_song(song['id'], download_dir, quality, incremental_callback, extra_metadata)
+            result = self.download_song(song['id'], download_dir, quality, incremental_callback,
+                                        extra_metadata, cancel_check=cancel_check)
             results['songs'].append(result)
             
             if result.get('success'):
@@ -1904,12 +1921,16 @@ class NeteaseDownloader(BaseDownloader):
     def _download_file(self, url: str, filepath: str,
                       progress_callback: Optional[Callable] = None,
                       display_name: str = None,
-                      max_retries: int = 2) -> bool:
+                      max_retries: int = 2,
+                      cancel_check: Optional[Callable[[], bool]] = None) -> bool:
         """下载文件（断点续传 + 原子落盘 + 大小校验）
 
         旧实现直接 open(filepath, 'wb')，CDN 半路断开会留下残缺文件；而
         download_song 又用 os.path.exists 判断"已下载"，坏文件就被永久跳过。
         现在写 .part，校验 content-length 后 os.replace 原子落盘，失败自动重试。
+
+        cancel_check 每个 chunk 检查一次：用户在 Telegram 点「取消」或后台点
+        「终止」时立刻停下，而不是等整首歌下完才响应——取消按钮必须真的有用。
         """
         os.makedirs(os.path.dirname(filepath) or '.', exist_ok=True)
         tmp_path = filepath + '.part'
@@ -1944,6 +1965,11 @@ class NeteaseDownloader(BaseDownloader):
                     for chunk in response.iter_content(chunk_size=chunk_size):
                         if not chunk:
                             continue
+                        # 取消检查放在写盘之后、最热的位置：中断时已经落盘的部分
+                        # 留在 .part 里，下次重新发链接能续传
+                        if cancel_check and cancel_check():
+                            response.close()
+                            raise DownloadCancelled()
                         f.write(chunk)
                         downloaded += len(chunk)
 
@@ -1972,6 +1998,9 @@ class NeteaseDownloader(BaseDownloader):
                 logger.info(f"✅ 下载完成: {filepath} ({self.format_size(actual)})")
                 return True
 
+            except DownloadCancelled:
+                # 不重试、不当失败，直接往上抛给下载队列
+                raise
             except Exception as e:
                 last_error = e
                 # 4xx 是链接失效，重试无意义

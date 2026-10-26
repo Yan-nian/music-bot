@@ -814,6 +814,8 @@ def sync_playlist(playlist_id: str):
             playlist_id=playlist_id,
             download_dir=download_dir
         )
+        config_manager.record_download_result(
+            platform, 'playlist', playlist_id, result, download_dir)
         
         # 发送 TG 通知
         try:
@@ -914,6 +916,8 @@ def sync_all_playlists():
                     playlist_id=playlist['playlist_id'],
                     download_dir=download_dir
                 )
+                config_manager.record_download_result(
+                    'netease', 'playlist', playlist['playlist_id'], result, download_dir)
                 failed_count = result.get('failed_songs', 0)
                 results.append({
                     'playlist_id': playlist['playlist_id'],
@@ -1015,6 +1019,8 @@ def retry_failed_songs(playlist_id: str):
             
             # 尝试重新下载
             result = downloader.download_song(song['song_id'], download_dir)
+            config_manager.record_download_result(
+                'netease', 'song', str(song['song_id']), result, download_dir)
             
             if result.get('success'):
                 config_manager.mark_song_downloaded(playlist_id, song['song_id'])
@@ -1614,6 +1620,9 @@ def api_job_playlist_sync():
             job.update(progress=1, total=3, message='拉取歌单信息')
             result = downloader.download_playlist_incremental(playlist_id, download_dir)
             job.update(progress=3, message='写入记录')
+            # Web 触发的同步必须自己写历史，否则仪表盘的累计/今日/容量永远是 0
+            config_manager.record_download_result(
+                platform, 'playlist', playlist_id, result, download_dir)
             return {'success': bool(result.get('success')), 'detail': result}
 
         job = job_manager.submit('playlist_sync', f'同步歌单 · {title}', _run, total=3)
@@ -1648,6 +1657,8 @@ def api_job_playlist_sync_all():
                 try:
                     result = downloader.download_playlist_incremental(
                         item['playlist_id'], download_dir)
+                    config_manager.record_download_result(
+                        'netease', 'playlist', item['playlist_id'], result, download_dir)
                     ok += 1 if result.get('success') else 0
                 except Exception as e:  # noqa: BLE001
                     logger.warning(f"同步歌单 {name} 失败: {e}")
@@ -1690,7 +1701,9 @@ def api_job_retry_failed():
                 job.update(progress=index - 1,
                            message=f"({index}/{len(failed)}) {song.get('song_name')}")
                 try:
-                    downloader.download_song(song['song_id'], download_dir)
+                    song_result = downloader.download_song(song['song_id'], download_dir)
+                    config_manager.record_download_result(
+                        'netease', 'song', str(song['song_id']), song_result, download_dir)
                     config_manager.mark_song_downloaded(playlist_id, song['song_id'])
                     config_manager.clear_song_fail_status(playlist_id, song['song_id'])
                     done += 1
@@ -1753,6 +1766,10 @@ def api_dashboard():
         from download_queue import get_download_queue
 
         stats = config_manager.get_history_stats()
+        # 曲库容量以磁盘为准：历史表里的字节数既可能缺失（老数据存的是曲目数），
+        # 也可能压根没写过（Web 触发的下载历史上不写历史）。扫不到文件时才回退到历史。
+        library = config_manager.get_library_stats()
+        size_bytes = library['bytes'] if library['files'] else stats['total_bytes']
         queue = get_download_queue().get_status()
         playlists = config_manager.get_subscribed_playlists()
         meta = _netease_keeper().get_meta()
@@ -1763,7 +1780,12 @@ def api_dashboard():
                 'stats': {
                     'total_downloads': stats['total'],
                     'today_downloads': stats['today'],
-                    'total_size': stats['total_bytes'],
+                    'total_size': size_bytes,
+                    'size_source': 'disk' if library['files'] else 'history',
+                    'library_files': library['files'],
+                    'library_missing': library['missing'],
+                    'library_scanned_at': library['scanned_at'],
+                    'history_bytes': stats['total_bytes'],
                     'playlist_count': len(playlists),
                     'active_playlists': sum(1 for p in playlists if p.get('enabled')),
                     'song_count': stats['song_count'],
@@ -1782,6 +1804,27 @@ def api_dashboard():
         })
     except Exception as e:
         logger.exception(f"获取仪表盘数据失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/library/rescan', methods=['POST'])
+@login_required
+def api_library_rescan():
+    """强制重扫曲库目录，返回真实的音频文件数与总大小。"""
+    try:
+        result = config_manager.get_library_stats(force=True)
+        return jsonify({
+            'success': True,
+            'data': {
+                'bytes': result['bytes'],
+                'files': result['files'],
+                'roots': result['roots'],
+                'missing': result['missing'],
+                'elapsed': result.get('elapsed', 0),
+            }
+        })
+    except Exception as e:
+        logger.exception(f"扫描曲库失败: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

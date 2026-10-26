@@ -147,6 +147,9 @@ class ConfigManager(PlaylistManager, HistoryManager, LogManager):
         "download_retry_delay_base": 2.0,
         "download_timeout": 1800,
         "handler_timeout": 60,
+
+        # 管理后台的公网/局域网地址，填了之后 TG 里会出现「打开管理后台」按钮
+        "web_ui_url": "",
     }
     
     def __init__(self, db_path: str = None):
@@ -442,6 +445,29 @@ class ConfigManager(PlaylistManager, HistoryManager, LogManager):
         AttributeError 被上层吞掉，Apple Music 下载器因此从未初始化成功。
         """
         return self.get_config(key, default)
+
+    def get_audio_roots(self) -> List[str]:
+        """收集所有可能的曲库目录（去重由扫描器负责）。
+
+        平台的下载目录可能被配置成 `download_path` 的子目录，也可能完全在别处；
+        三个都交给扫描器，让它按绝对路径去重。
+        """
+        keys = (
+            'netease_download_path',
+            'apple_music_download_path',
+            'download_path',
+        )
+        roots: List[str] = []
+        for key in keys:
+            value = self.get_config(key, '')
+            if value and str(value).strip():
+                roots.append(str(value).strip())
+        return roots
+
+    def get_library_stats(self, ttl: float = 60.0, force: bool = False) -> Dict[str, Any]:
+        """曲库容量（扫盘）。见 config/library_stats.py 的说明。"""
+        from config.library_stats import scan_audio_size
+        return scan_audio_size(self.get_audio_roots(), ttl=ttl, force=force)
 
     def set_config(self, key: str, value: Any) -> bool:
         """设置配置值"""

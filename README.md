@@ -1,6 +1,7 @@
 # Music Bot - 精简版音乐下载机器人
 
 基于原 SaveXTube 项目重构，专注于音乐下载功能，支持 Web 配置管理。
+当前内置两个下载器：网易云音乐、Apple Music。
 
 ## ✨ 功能特点
 
@@ -9,6 +10,7 @@
 - 🍎 **Apple Music** - 支持 ALAC 无损下载
 - 🌐 **Web 管理后台** - 仪表盘 / 歌单订阅 / 下载记录 / 日志 / 设置 / 账号，全部可视化
 - 🤖 **Telegram Bot** - 发送链接即可下载，支持并发处理多条消息
+- 💬 **消息交互** - 单条消息原地刷新的进度卡（进度条/速度/剩余/排队位次）、可用的取消按钮、完成卡片带音质与落盘路径、失败原因翻译成人话
 - 🔑 **Telegram Session** - 内置 Session 生成器，支持大文件下载
 - 📝 **元数据支持** - 完善的音频元数据管理（封面、歌词、专辑信息）
 - 📦 **下载队列** - 并发上限、失败重试（指数退避）、断点续传、任务取消
@@ -165,6 +167,7 @@ music_bot/
 ├── docker-compose.yml      # Docker Compose 配置
 ├── README.md               # 本文档
 │
+├── config/                 # 配置/历史/日志/歌单的 Mixin，以及曲库扫盘统计
 ├── download_queue.py       # 下载队列（并发/重试/取消）
 ├── cookie_keeper.py        # 网易云登录态守护线程（定时检测 + 自动续期 + 失效提醒）
 ├── db/                     # 本地运行时的默认数据库目录（Docker 下是 /app/db）
@@ -173,8 +176,8 @@ music_bot/
 │   ├── __init__.py         # 进程内下载器注册表（全局复用同一实例）
 │   ├── base.py             # 基础下载器类
 │   ├── netease.py          # 网易云音乐下载器
+│   ├── errors.py           # DownloadCancelled（让「取消」能穿透到下载线程）
 │   ├── netease_auth.py     # 网易云 Cookie / 扫码登录 / 续期
-│   ├── youtube_music.py    # YouTube Music 下载器
 │   ├── apple_music.py      # Apple Music 下载器
 │   └── metadata.py         # 音频元数据管理
 │
@@ -184,6 +187,7 @@ music_bot/
     ├── jobs.py             # 后台任务（同步歌单 / 刷新元数据 / 批量重试）
     ├── db_logger.py         # 把应用日志写进数据库（供日志页展示）
     ├── tg_setup.py         # Telegram Session 生成器
+    ├── tg_ui.py            # TG 消息渲染层（HTML 转义 / 安全发送 / 进度卡片）
     ├── static/
     │   ├── css/app.css     # 设计系统（不依赖任何 CSS 框架）
     │   └── js/app.js       # 图标 / 请求封装 / 弹窗 / 格式化工具
@@ -213,11 +217,29 @@ music_bot/
 - 长任务（同步歌单、刷新元数据、批量重试）都在后台跑，页面显示进度，不会转圈卡住
 - 设置页会把当前 tab 记在 URL（`/settings#download`），保存后不会跳回第一页
 - 弹窗支持 `Esc` 关闭、点遮罩关闭、`Enter` 提交
+- **曲库容量是扫盘算出来的**（扫配置文件里的下载目录），不依赖下载记录——所以手动删过的文件、Web 触发的下载都能算准。数据不对时点那张卡片会强制重扫
 
 ### Telegram Bot 命令
 
-- `/start` - 显示帮助
-- `/status` - 查看状态
+命令菜单会自动同步到聊天框左下角的菜单按钮，不用背命令。
+
+| 命令 | 作用 |
+|------|------|
+| `/start` `/help` | 使用说明 + 快捷按钮（状态 / 队列 / 历史 / 账号 / 后台） |
+| `/status` | 状态总览：下载器、登录态、队列、曲库容量、今日与累计，可点刷新 |
+| `/queue` | 进行中的任务列表，看得到「前面还有几个」 |
+| `/history [页码]` | 下载历史，每页 8 条，按钮翻页 |
+| `/cookie [cookie]` | 查看登录态（优先引导去后台扫码）；带参数则更新 Cookie |
+| `/cancel` | 取消自己所有排队中/下载中的任务 |
+| `/id` | 查看自己的 Telegram ID，配白名单用 |
+
+### 消息交互
+
+- **进度卡片**：一条消息原地刷新，含文字进度条、当前第几首、大小/速度/剩余时间，右下角带 `⏹ 取消下载`，点了会真的中断（不是只改个文字）
+- **排队可见**：还没轮到时会显示「前面还有 N 个任务」，不会让人以为卡死
+- **完成卡片**：单曲显示大小/音质/码率/时长/落盘目录；专辑和歌单显示成功失败数、本次大小、前 5 首，失败曲目会翻译成人话（比如「Cookie 失效」「需要会员」）并给建议
+- **不再整条消息报错**：所有消息走 HTML 渲染并转义，歌单名带 `[` `_` `*` `&` 也不会再发不出去
+- **私聊发错东西有提示**：发一段不是链接的文字会提醒怎么发链接，30 秒内不重复刷
 
 ### 发送链接下载
 
@@ -228,10 +250,6 @@ music_bot/
 https://music.163.com/song?id=123456
 https://music.163.com/#/album?id=123456
 https://music.163.com/#/playlist?id=123456
-
-# YouTube Music
-https://music.youtube.com/watch?v=xxxxx
-https://music.youtube.com/playlist?list=xxxxx
 
 # Apple Music
 https://music.apple.com/cn/album/xxxxx
@@ -268,13 +286,6 @@ Cookie 自动落库，之后由后台线程自动续期。
 4. 粘贴到「账号与登录」→「手动填写 Cookie」，或 Web 设置里的 Cookie 字段
 
 > 关键 Cookie 是 `MUSIC_U`（会员身份）和 `__csrf`。
-
-### YouTube / YouTube Music
-
-1. 安装浏览器扩展 "Get cookies.txt LOCALLY"
-2. 登录 YouTube
-3. 导出 cookies.txt
-4. 放到 `cookies/youtube_cookies.txt`
 
 ### Apple Music
 
@@ -315,6 +326,7 @@ POST /api/config/import   # 导入配置
 GET  /api/history         # 获取下载历史
 GET  /api/status          # 获取服务状态
 GET  /api/dashboard       # 首页聚合数据（统计 + 队列 + 最近下载 + 登录态）
+POST /api/library/rescan  # 重扫曲库目录，返回真实音频文件数与总大小
 GET  /api/logs            # 应用日志（支持 level / category / search / 多级别）
 
 # 网易云登录态

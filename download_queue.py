@@ -16,11 +16,14 @@
 import asyncio
 import logging
 import random
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Optional, Callable, Dict, Any, Awaitable
+
+from downloaders.errors import DownloadCancelled
 
 logger = logging.getLogger('music_bot.queue')
 
@@ -61,6 +64,11 @@ class DownloadTask:
     cancelled: bool = False
     message: str = "排队中"
 
+    # 取消信号：下载线程和队列之间唯一的通信渠道。
+    # 旧实现只有上面的 cancelled 布尔标记，而真正在跑的是 to_thread 里的
+    # 同步下载，没人读那个标记，于是"点了取消，进度条照旧往前跑"。
+    cancel_event: threading.Event = field(default_factory=threading.Event)
+
     # 元数据（用于状态展示）
     platform: str = ""
     content_type: str = ""
@@ -69,6 +77,8 @@ class DownloadTask:
 
     # 内部：用于等待任务完成的 Future
     _future: Optional[asyncio.Future] = field(default=None, init=False)
+    # 排队位次（1 = 下一棒就是它），由队列在查询状态时刷新
+    queue_position: Optional[int] = field(default=None, init=False)
 
     def next_retry_delay(self) -> float:
         """计算下次重试延迟（指数退避 + 抖动）"""
@@ -98,7 +108,14 @@ class DownloadTask:
             'created_at': datetime.fromtimestamp(self.created_at).isoformat(timespec='seconds'),
             'duration': round(self.duration, 1) if self.duration else None,
             'last_error': self.last_error,
+            'queue_position': self.queue_position,
         }
+
+    def request_cancel(self):
+        """标记取消 + 通知下载线程。两个都要做，缺一个就会出现
+        "界面显示已取消、文件还在往磁盘里写"。"""
+        self.cancelled = True
+        self.cancel_event.set()
 
 
 class DownloadQueue:
@@ -324,6 +341,15 @@ class DownloadQueue:
                     self._resolve(task, exception=asyncio.CancelledError())
                     raise
 
+                except DownloadCancelled:
+                    # 下载线程主动抛上来的取消：不是错误，不重试
+                    task.status = TaskStatus.CANCELLED
+                    task.finished_at = time.time()
+                    task.message = "已取消"
+                    logger.info(f"⏹ 任务已取消: {task.task_id}")
+                    self._resolve(task, {'success': False, 'cancelled': True, 'error': '已取消'})
+                    return
+
                 except Exception as e:
                     task.retry_count += 1
                     task.last_error = str(e)
@@ -358,12 +384,14 @@ class DownloadQueue:
         task = self._tasks.get(task_id)
         if not task or task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
             return False
-        task.cancelled = True
+        # 关键：必须同时 set cancel_event，否则正在 to_thread 里跑的下载
+        # 根本不知道有人要它停，会一直下到整张专辑结束
+        task.request_cancel()
         task.message = "已取消"
         if task.status is TaskStatus.PENDING:
             task.status = TaskStatus.CANCELLED
             task.finished_at = time.time()
-            self._resolve(task, exception=asyncio.CancelledError())
+            self._resolve(task, {'success': False, 'cancelled': True, 'error': '已取消'})
         logger.info(f"🛑 已请求取消任务: {task_id}")
         return True
 
@@ -381,6 +409,18 @@ class DownloadQueue:
         for t in tasks:
             status_counts[t.status.value] += 1
 
+        # 排队位次：按入队时间排，1 表示下一个就轮到。
+        # 用户最想知道的就是"我还要等多久"，光给一个 pending 总数没用。
+        pending = sorted(
+            (t for t in tasks if t.status is TaskStatus.PENDING),
+            key=lambda x: x.created_at,
+        )
+        for index, task in enumerate(pending, 1):
+            task.queue_position = index
+        for task in tasks:
+            if task.status is not TaskStatus.PENDING:
+                task.queue_position = None
+
         recent = sorted(tasks, key=lambda x: x.created_at, reverse=True)[:30]
         return {
             'running': self._running,
@@ -394,6 +434,12 @@ class DownloadQueue:
             'total': len(tasks),
             'tasks': [t.to_dict() for t in recent],
         }
+
+    def get_position(self, task_id: str) -> Optional[int]:
+        """单个任务的排队位次。"""
+        self.get_status()
+        task = self._tasks.get(task_id)
+        return task.queue_position if task else None
 
 
 # 全局队列实例

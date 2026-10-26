@@ -63,6 +63,14 @@ const SCHEMA = [
         ],
       },
       {
+        title: '交互',
+        fields: [
+          { key: 'web_ui_url', label: '管理后台地址', type: 'text',
+            placeholder: 'http://192.168.1.10:5000',
+            hint: '填了之后，Bot 里会多一个「打开管理后台」按钮，扫码登录也走这里' },
+        ],
+      },
+      {
         title: '文件回传',
         fields: [
           { key: 'telegram_send_file', label: '下载完成后把文件发回 Telegram', type: 'bool',

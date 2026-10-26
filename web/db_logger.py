@@ -20,12 +20,23 @@ class DatabaseLogHandler(logging.Handler):
     写入，会与业务线程争抢数据库锁、拖垮响应。改为：emit 仅投递到内存
     队列，由单一后台线程批量写入，既减少锁竞争又不阻塞调用方。队列满时
     丢弃日志，保证业务线程不被阻塞。
+
+    另外挂的是根 logger，所以要主动过滤第三方库的噪声日志——否则
+    urllib3 的每个 HTTP 连接、werkzeug 的每条访问记录都会入库，
+    app_logs 表几天就上百万行。
     """
 
     _BATCH_SIZE = 50
     _FLUSH_INTERVAL = 2.0
     _QUEUE_MAXSIZE = 2000
     _CLEANUP_EVERY = 1000  # 每写入 N 条触发一次老日志清理
+
+    # 这些 logger 的日志不进库（需要排查时看 docker logs）
+    NOISY_LOGGERS = (
+        'urllib3', 'werkzeug', 'telegram', 'httpx', 'httpcore', 'asyncio',
+        'PIL', 'charset_normalizer', 'requests', 'aiohttp', 'multipart',
+        'db-log-writer', 'music_bot.jobs',
+    )
 
     def __init__(self, config_manager):
         super().__init__()
@@ -35,23 +46,24 @@ class DatabaseLogHandler(logging.Handler):
         self._dropped = 0
         self._written_since_cleanup = 0
 
-        # 类别关键词映射
+        # 按 logger 名直接映射类别（比逐行跑正则快一个数量级）
+        self._logger_category = {
+            'metadata': 'metadata',
+            'telegram': 'telegram',
+            'tg_': 'telegram',
+            'download': 'download',
+            'playlist': 'playlist',
+            'queue': 'download',
+            'cookie_keeper': 'netease',
+            'netease_auth': 'netease',
+        }
+
+        # 类别关键词映射（仅在 logger 名无法判断时兜底，只保留强特征词）
         self.category_patterns = {
-            'metadata': [
-                r'元数据', r'metadata', r'mutagen', r'eyed3', r'tinytag',
-                r'标签', r'tag', r'封面', r'cover', r'歌词', r'lyric',
-                r'专辑', r'album', r'艺术家', r'artist', r'标题', r'title'
-            ],
-            'download': [
-                r'下载', r'download', r'获取', r'fetch', r'保存', r'save',
-                r'歌曲', r'song', r'音乐', r'music', r'文件', r'file'
-            ],
-            'telegram': [
-                r'telegram', r'tg', r'bot', r'消息', r'message', r'通知'
-            ],
-            'playlist': [
-                r'歌单', r'playlist', r'订阅', r'subscribe', r'同步', r'sync'
-            ],
+            'metadata': [r'元数据', r'metadata', r'mutagen', r'封面', r'歌词', r'专辑'],
+            'download': [r'下载', r'download', r'任务'],
+            'telegram': [r'telegram', r'通知'],
+            'playlist': [r'歌单', r'playlist', r'同步'],
         }
 
         self._worker = threading.Thread(
@@ -60,19 +72,13 @@ class DatabaseLogHandler(logging.Handler):
         self._worker.start()
 
     def _detect_category(self, message: str, logger_name: str) -> str:
-        """根据消息内容和 logger 名称检测类别"""
-        message_lower = message.lower()
+        """根据 logger 名称优先判断，其次才扫关键词"""
         logger_lower = (logger_name or '').lower()
+        for token, category in self._logger_category.items():
+            if token in logger_lower:
+                return category
 
-        # 根据 logger 名称判断
-        if 'metadata' in logger_lower:
-            return 'metadata'
-        if 'telegram' in logger_lower or 'tg_' in logger_lower:
-            return 'telegram'
-        if 'download' in logger_lower:
-            return 'download'
-
-        # 根据消息内容判断
+        message_lower = message.lower()
         for category, patterns in self.category_patterns.items():
             for pattern in patterns:
                 if re.search(pattern, message_lower):
@@ -83,6 +89,8 @@ class DatabaseLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord):
         """投递日志到队列（非阻塞，绝不卡调用方）"""
         try:
+            if record.name.startswith(self.NOISY_LOGGERS):
+                return
             message = self.format(record)
             category = self._detect_category(message, record.name)
             extra_data = getattr(record, 'extra_data', None)

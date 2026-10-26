@@ -1,670 +1,478 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Music Bot - 系统设置</title>
-    <style>
-        /* ==============================
-           🎨 设计系统 - Design Tokens
-           ============================== */
-        
-        :root {
-            /* 品牌色 */
-            --primary: #6366f1;
-            --primary-light: #818cf8;
-            --primary-dark: #4f46e5;
-            --primary-soft: #eef2ff;
-            
-            /* 功能色 */
-            --success: #10b981;
-            --warning: #f59e0b;
-            --danger: #ef4444;
-            --info: #3b82f6;
-            
-            /* 中性色 */
-            --gray-50: #f9fafb;
-            --gray-100: #f3f4f6;
-            --gray-200: #e5e7eb;
-            --gray-300: #d1d5db;
-            --gray-400: #9ca3af;
-            --gray-500: #6b7280;
-            --gray-600: #4b5563;
-            --gray-700: #374151;
-            --gray-800: #1f2937;
-            --gray-900: #111827;
-            
-            /* 背景 */
-            --bg-body: #f0f2f5;
-            --bg-card: #ffffff;
-            --bg-sidebar: #1e293b;
-            --bg-sidebar-hover: #334155;
-            --bg-sidebar-active: #6366f1;
-            
-            /* 文字 */
-            --text-primary: var(--gray-900);
-            --text-secondary: var(--gray-600);
-            --text-tertiary: var(--gray-400);
-            --text-sidebar: #e2e8f0;
-            --text-sidebar-muted: var(--gray-400);
-            
-            /* 阴影 */
-            --shadow-xs: 0 1px 2px rgba(0,0,0,0.04);
-            --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
-            --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -1px rgba(0,0,0,0.04);
-            --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -2px rgba(0,0,0,0.04);
-            
-            /* 圆角 */
-            --radius-sm: 6px;
-            --radius-md: 10px;
-            --radius-lg: 16px;
-            
-            /* 间距 */
-            --space-1: 4px;
-            --space-2: 8px;
-            --space-3: 12px;
-            --space-4: 16px;
-            --space-5: 20px;
-            --space-6: 24px;
-            --space-8: 32px;
-            
-            /* 动画 */
-            --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
-            --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
-        }
-        
-        /* ==============================
-           🎯 全局重置
-           ============================== */
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-            background: var(--bg-body);
-            color: var(--text-primary);
-            line-height: 1.6;
-        }
-        
-        /* ==============================
-           📐 布局系统
-           ============================== */
-        .app-layout {
-            display: flex;
-            min-height: 100vh;
-        }
-        
-        /* ==============================
-           🎨 侧边栏
-           ============================== */
-        .sidebar {
-            width: 260px;
-            background: var(--bg-sidebar);
-            color: var(--text-sidebar);
-            display: flex;
-            flex-direction: column;
-            position: fixed;
-            top: 0;
-            left: 0;
-            height: 100vh;
-            z-index: 100;
-            transition: transform var(--transition-normal);
-        }
-        
-        .sidebar-header {
-            padding: var(--space-6);
-            border-bottom: 1px solid rgba(255,255,255,0.08);
-        }
-        
-        .sidebar-brand {
-            display: flex;
-            align-items: center;
-            gap: var(--space-3);
-        }
-        
-        .sidebar-logo {
-            width: 40px;
-            height: 40px;
-            background: linear-gradient(135deg, var(--primary), var(--primary-light));
-            border-radius: var(--radius-md);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.5rem;
-            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-        }
-        
-        .sidebar-title {
-            font-size: 1.1rem;
-            font-weight: 700;
-        }
-        
-        .sidebar-subtitle {
-            font-size: 0.75rem;
-            color: var(--text-sidebar-muted);
-        }
-        
-        .sidebar-nav {
-            flex: 1;
-            padding: var(--space-4);
-            overflow-y: auto;
-        }
-        
-        .nav-section {
-            margin-bottom: var(--space-6);
-        }
-        
-        .nav-section-title {
-            font-size: 0.7rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            color: var(--text-sidebar-muted);
-            padding: var(--space-2) var(--space-3);
-            margin-bottom: var(--space-2);
-        }
-        
-        .nav-item {
-            display: flex;
-            align-items: center;
-            gap: var(--space-3);
-            width: 100%;
-            padding: 10px var(--space-3);
-            border: none;
-            background: transparent;
-            color: var(--text-sidebar);
-            border-radius: var(--radius-md);
-            cursor: pointer;
-            font-size: 0.9rem;
-            text-align: left;
-            transition: all var(--transition-fast);
-            margin-bottom: 2px;
-            text-decoration: none;
-        }
-        
-        .nav-item:hover {
-            background: var(--bg-sidebar-hover);
-            color: white;
-        }
-        
-        .nav-item.active {
-            background: var(--bg-sidebar-active);
-            color: white;
-            font-weight: 500;
-            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-        }
-        
-        .nav-icon {
-            font-size: 1.2rem;
-            width: 24px;
-            text-align: center;
-        }
-        
-        /* ==============================
-           📄 主内容区
-           ============================== */
-        .main-content {
-            flex: 1;
-            margin-left: 260px;
-            min-height: 100vh;
-        }
-        
-        .topbar {
-            background: var(--bg-card);
-            border-bottom: 1px solid var(--gray-200);
-            padding: 0 var(--space-8);
-            height: 64px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            position: sticky;
-            top: 0;
-            z-index: 50;
-        }
-        
-        .topbar-title {
-            font-size: 1.2rem;
-            font-weight: 600;
-        }
-        
-        .content-wrapper {
-            padding: var(--space-8);
-            max-width: 1400px;
-            margin: 0 auto;
-        }
-        
-        /* ==============================
-           🃏 卡片
-           ============================== */
-        .card {
-            background: var(--bg-card);
-            border-radius: var(--radius-lg);
-            box-shadow: var(--shadow-sm);
-            border: 1px solid var(--gray-200);
-            overflow: hidden;
-            margin-bottom: var(--space-6);
-        }
-        
-        .card-header {
-            padding: var(--space-5) var(--space-6);
-            border-bottom: 1px solid var(--gray-200);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-        
-        .card-title {
-            font-size: 1rem;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: var(--space-2);
-        }
-        
-        .card-body {
-            padding: var(--space-6);
-        }
-        
-        /* ==============================
-           📝 表单
-           ============================== */
-        .form-group {
-            margin-bottom: var(--space-5);
-        }
-        
-        .form-label {
-            display: block;
-            font-size: 0.875rem;
-            font-weight: 500;
-            color: var(--text-primary);
-            margin-bottom: var(--space-2);
-        }
-        
-        .form-input {
-            width: 100%;
-            padding: 10px var(--space-4);
-            border: 1.5px solid var(--gray-300);
-            border-radius: var(--radius-md);
-            font-size: 0.9rem;
-            color: var(--text-primary);
-            background: var(--bg-card);
-            transition: all var(--transition-fast);
-        }
-        
-        .form-input:focus {
-            outline: none;
-            border-color: var(--primary);
-            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-        }
-        
-        .form-hint {
-            font-size: 0.8rem;
-            color: var(--text-tertiary);
-            margin-top: var(--space-1);
-        }
-        
-        /* ==============================
-           🔘 开关
-           ============================== */
-        .switch-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: var(--space-4) 0;
-            border-bottom: 1px solid var(--gray-100);
-        }
-        
-        .switch-text {
-            flex: 1;
-        }
-        
-        .switch-title {
-            font-size: 0.9rem;
-            font-weight: 500;
-            color: var(--text-primary);
-        }
-        
-        .switch-sub {
-            font-size: 0.8rem;
-            color: var(--text-tertiary);
-            margin-top: 2px;
-        }
-        
-        .switch {
-            position: relative;
-            width: 44px;
-            height: 24px;
-            flex-shrink: 0;
-        }
-        
-        .switch input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-        
-        .switch-slider {
-            position: absolute;
-            cursor: pointer;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: var(--gray-300);
-            border-radius: var(--radius-full);
-            transition: var(--transition-fast);
-        }
-        
-        .switch-slider::before {
-            content: '';
-            position: absolute;
-            height: 18px;
-            width: 18px;
-            left: 3px;
-            bottom: 3px;
-            background: white;
-            border-radius: 50%;
-            transition: var(--transition-fast);
-            box-shadow: var(--shadow-sm);
-        }
-        
-        .switch input:checked + .switch-slider {
-            background: var(--primary);
-        }
-        
-        .switch input:checked + .switch-slider::before {
-            transform: translateX(20px);
-        }
-        
-        /* ==============================
-           🔘 按钮
-           ============================== */
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: var(--space-2);
-            padding: 10px 20px;
-            border: none;
-            border-radius: var(--radius-md);
-            font-size: 0.9rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all var(--transition-fast);
-        }
-        
-        .btn-primary {
-            background: var(--primary);
-            color: white;
-        }
-        
-        .btn-primary:hover {
-            background: var(--primary-dark);
-            transform: translateY(-1px);
-        }
-        
-        .btn-secondary {
-            background: var(--gray-100);
-            color: var(--text-primary);
-        }
-        
-        .btn-secondary:hover {
-            background: var(--gray-200);
-        }
-        
-        /* ==============================
-           📱 响应式
-           ============================== */
-        @media (max-width: 1024px) {
-            .sidebar {
-                transform: translateX(-100%);
-            }
-            
-            .main-content {
-                margin-left: 0;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="app-layout">
-        <!-- 侧边栏 -->
-        <aside class="sidebar" id="sidebar">
-            <div class="sidebar-header">
-                <div class="sidebar-brand">
-                    <div class="sidebar-logo">🎵</div>
-                    <div>
-                        <div class="sidebar-title">Music Bot</div>
-                        <div class="sidebar-subtitle">v2.0</div>
-                    </div>
-                </div>
-            </div>
-            
-            <nav class="sidebar-nav">
-                <div class="nav-section">
-                    <div class="nav-section-title">主要功能</div>
-                    <a href="/" class="nav-item">
-                        <span class="nav-icon">📊</span>
-                        <span>仪表盘</span>
-                    </a>
-                    <a href="/settings" class="nav-item active">
-                        <span class="nav-icon">⚙️</span>
-                        <span>系统设置</span>
-                    </a>
-                </div>
-                
-                <div class="nav-section">
-                    <div class="nav-section-title">数据管理</div>
-                    <a href="/history" class="nav-item">
-                        <span class="nav-icon">📜</span>
-                        <span>下载历史</span>
-                    </a>
-                    <a href="/playlists" class="nav-item">
-                        <span class="nav-icon">📀</span>
-                        <span>歌单订阅</span>
-                    </a>
-                </div>
-                
-                <div class="nav-section">
-                    <div class="nav-section-title">系统</div>
-                    <a href="/logs" class="nav-item">
-                        <span class="nav-icon">📝</span>
-                        <span>系统日志</span>
-                    </a>
-                    <a href="/account" class="nav-item">
-                        <span class="nav-icon">👤</span>
-                        <span>账号管理</span>
-                    </a>
-                </div>
-            </nav>
-        </aside>
-        
-        <!-- 主内容区 -->
-        <main class="main-content">
-            <header class="topbar">
-                <div class="topbar-title">⚙️ 系统设置</div>
-                <div>
-                    <button class="btn btn-primary" onclick="saveAllSettings()">💾 保存所有设置</button>
-                </div>
-            </header>
-            
-            <div class="content-wrapper">
-                <!-- Telegram 设置 -->
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-title">📱 Telegram 配置</div>
-                    </div>
-                    <div class="card-body">
-                        <div class="form-group">
-                            <label class="form-label">Bot Token</label>
-                            <input type="password" class="form-input" id="telegram_token" placeholder="输入 Telegram Bot Token">
-                            <div class="form-hint">从 @BotFather 获取</div>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label class="form-label">Chat ID</label>
-                            <input type="text" class="form-input" id="telegram_chat_id" placeholder="输入 Chat ID">
-                            <div class="form-hint">接收通知的聊天 ID</div>
-                        </div>
-                        
-                        <div class="switch-row">
-                            <div class="switch-text">
-                                <div class="switch-title">启用 Telegram 通知</div>
-                                <div class="switch-sub">下载完成/失败时接收通知</div>
-                            </div>
-                            <label class="switch">
-                                <input type="checkbox" id="telegram_enabled" checked>
-                                <span class="switch-slider"></span>
-                            </label>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- 下载设置 -->
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-title">⬇️ 下载配置</div>
-                    </div>
-                    <div class="card-body">
-                        <div class="form-group">
-                            <label class="form-label">下载路径</label>
-                            <input type="text" class="form-input" id="download_path" placeholder="/downloads">
-                            <div class="form-hint">文件保存位置</div>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label class="form-label">最大并发数</label>
-                            <input type="number" class="form-input" id="max_concurrent" value="3" min="1" max="10">
-                            <div class="form-hint">同时下载的任务数</div>
-                        </div>
-                        
-                        <div class="switch-row">
-                            <div class="switch-text">
-                                <div class="switch-title">自动重试</div>
-                                <div class="switch-sub">下载失败时自动重试</div>
-                            </div>
-                            <label class="switch">
-                                <input type="checkbox" id="auto_retry" checked>
-                                <span class="switch-slider"></span>
-                            </label>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- 网易云音乐设置 -->
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-title">🎵 网易云音乐</div>
-                    </div>
-                    <div class="card-body">
-                        <div class="form-group">
-                            <label class="form-label">Cookies</label>
-                            <textarea class="form-input" id="netease_cookies" rows="4" placeholder="输入网易云音乐 Cookies"></textarea>
-                            <div class="form-hint">用于下载需要登录的歌曲</div>
-                        </div>
-                        
-                        <button class="btn btn-secondary" onclick="testNeteaseConnection()">🔍 测试连接</button>
-                    </div>
-                </div>
-            </div>
-        </main>
+{% extends "base.html" %}
+{% set active_page = 'settings' %}
+
+{% block title %}设置{% endblock %}
+{% block page_title %}设置{% endblock %}
+{% block page_sub %}所有改动即时生效，无需重启容器{% endblock %}
+
+{% block topbar_right %}
+  <a class="btn btn-sm" href="/tg/setup" title="Telegram Session 生成器"><i data-icon="key" data-size="14"></i><span>Session 生成器</span></a>
+  <button class="btn btn-sm" id="btnTelegramTest" title="发送测试消息"><i data-icon="send" data-size="14"></i><span>发送测试消息</span></button>
+  <button class="btn-icon" id="btnReload" title="重新加载配置"><i data-icon="refresh"></i></button>
+{% endblock %}
+
+{% block content %}
+<div class="settings-layout">
+  <div class="settings-nav" id="settingsNav"></div>
+  <div id="settingsPanels">
+    <div class="card"><div class="card-body">
+      <div class="skeleton" style="width:40%;margin-bottom:10px"></div>
+      <div class="skeleton" style="width:80%;margin-bottom:8px"></div>
+      <div class="skeleton" style="width:65%"></div>
+    </div></div>
+  </div>
+</div>
+
+<div class="save-bar hidden" id="saveBar">
+  <span class="strong" id="saveCount">有未保存的更改</span>
+  <span class="tiny muted grow">保存后会写入数据库并热加载到运行中的下载器</span>
+  <button class="btn btn-sm" id="btnDiscard">撤销</button>
+  <button class="btn btn-sm btn-primary" id="btnSave"><i data-icon="save" data-size="14"></i>保存</button>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+/* ------------------------------------------------------------------
+   用 schema 生成表单：字段一多，手写 HTML 必然出现 key 拼错 / 类型
+   不一致 / 漏渲染。这里全部由一处定义驱动。
+   ------------------------------------------------------------------ */
+const SCHEMA = [
+  {
+    id: 'telegram', label: 'Telegram', desc: 'Bot 凭据与消息通知行为',
+    sections: [
+      {
+        title: 'Bot 凭据',
+        fields: [
+          { key: 'telegram_bot_token', label: 'Bot Token', type: 'password',
+            hint: '在 @BotFather 里用 /newbot 创建后获得' },
+          { key: 'telegram_allowed_users', label: '允许使用的用户 ID', type: 'text',
+            hint: '多个用英文逗号分隔。留空表示所有人可用，建议填上自己的 ID' },
+        ],
+      },
+      {
+        title: '通知',
+        fields: [
+          { key: 'telegram_notify_enabled', label: '启用 Telegram 通知', type: 'bool' },
+          { key: 'telegram_notify_progress', label: '推送下载进度', type: 'bool',
+            sub: '下载中的实时进度条，会频繁编辑同一条消息' },
+          { key: 'telegram_notify_complete', label: '完成时通知', type: 'bool' },
+          { key: 'telegram_notify_error', label: '出错时通知', type: 'bool' },
+          { key: 'telegram_progress_interval', label: '进度刷新间隔（秒）', type: 'number', step: '0.5',
+            hint: '太小容易触发 Telegram 限流，建议 1~3 秒' },
+        ],
+      },
+      {
+        title: '文件回传',
+        fields: [
+          { key: 'telegram_send_file', label: '下载完成后把文件发回 Telegram', type: 'bool',
+            sub: '需要配合 Session String 才能突破 50MB 限制' },
+          { key: 'telegram_file_size_limit', label: '文件大小上限（MB）', type: 'number',
+            hint: 'Bot API 直传上限 50MB，使用 Session 可到 2000MB' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'netease', label: '网易云音乐', desc: '音质、命名规则与登录态',
+    sections: [
+      {
+        title: '基础',
+        fields: [
+          { key: 'netease_enabled', label: '启用网易云下载', type: 'bool' },
+          { key: 'netease_download_path', label: '下载目录', type: 'text',
+            hint: '容器内路径，需与 docker-compose 的挂载保持一致' },
+          { key: 'netease_quality', label: '音质', type: 'select',
+            options: [['无损', '无损 / FLAC（需要 VIP）'], ['极高', '极高 320kbps'], ['较高', '较高 192kbps'], ['标准', '标准 128kbps']],
+            hint: '取不到目标音质时会自动降级' },
+        ],
+      },
+      {
+        title: '附属文件',
+        fields: [
+          { key: 'netease_download_lyrics', label: '下载歌词（.lrc）', type: 'bool' },
+          { key: 'netease_download_cover', label: '下载封面（cover.jpg）', type: 'bool' },
+          { key: 'netease_lyrics_merge', label: '把歌词内嵌进音频文件', type: 'bool' },
+        ],
+      },
+      {
+        title: '目录与文件名',
+        fields: [
+          { key: 'netease_dir_format', label: '目录结构', type: 'text',
+            hint: '可用变量：<code>{ArtistName}</code> <code>{AlbumName}</code> <code>{SongName}</code>' },
+          { key: 'netease_album_folder_format', label: '专辑文件夹名', type: 'text',
+            hint: '可用变量：<code>{AlbumName}</code> <code>{ReleaseDate}</code> <code>{ArtistName}</code>' },
+          { key: 'netease_song_file_format', label: '歌曲文件名', type: 'text',
+            hint: '可用变量：<code>{SongName}</code> <code>{ArtistName}</code> <code>{TrackNumber}</code>' },
+        ],
+      },
+      {
+        title: '登录态与 Cookie',
+        fields: [
+          { key: 'netease_auto_refresh_enabled', label: '自动检测并续期登录态', type: 'bool',
+            sub: '后台定时检查 MUSIC_U 是否有效，能续期就续，失效会通知你' },
+          { key: 'netease_cookie_check_interval', label: '检测间隔（秒）', type: 'number',
+            hint: '默认 1800 秒（30 分钟）。太频繁只是浪费请求，建议不低于 600' },
+          { key: 'netease_cookie_notify_on_expire', label: '失效时发 Telegram 提醒', type: 'bool' },
+          { key: 'netease_cookies', label: 'Cookie 字符串', type: 'textarea',
+            hint: '一般不用手填：去「账号与登录」页扫码，会自动写回这里' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'apple', label: 'Apple Music', desc: '基于 gamdl 的 ALAC 下载（可选）',
+    sections: [
+      {
+        title: '基础',
+        fields: [
+          { key: 'apple_music_enabled', label: '启用 Apple Music 下载', type: 'bool' },
+          { key: 'apple_music_download_path', label: '下载目录', type: 'text' },
+          { key: 'apple_music_quality', label: '音质', type: 'select',
+            options: [['lossless', 'ALAC 无损'], ['aac-256', 'AAC 256kbps']] },
+          { key: 'apple_music_region', label: '区域', type: 'select',
+            options: [['cn', '中国大陆 (cn)'], ['us', '美国 (us)'], ['jp', '日本 (jp)'], ['hk', '中国香港 (hk)'], ['tw', '中国台湾 (tw)']] },
+        ],
+      },
+      {
+        title: '附属文件与服务',
+        fields: [
+          { key: 'apple_music_download_lyrics', label: '下载歌词', type: 'bool' },
+          { key: 'apple_music_download_cover', label: '下载封面', type: 'bool' },
+          { key: 'apple_music_decrypt_host', label: '解密服务地址', type: 'text',
+            hint: '自建的 wrapper 服务，留空则尝试本地解密' },
+          { key: 'apple_music_get_host', label: '获取服务地址', type: 'text' },
+          { key: 'apple_music_cookies', label: 'Cookies', type: 'textarea' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'download', label: '下载与队列', desc: '并发、重试与超时',
+    sections: [
+      {
+        title: '队列',
+        fields: [
+          { key: 'download_max_concurrent', label: '最大并发下载数', type: 'number',
+            hint: '同时进行的下载任务上限，修改后立即对运行中的队列生效' },
+          { key: 'download_max_retries', label: '失败重试次数', type: 'number',
+            hint: '只对网络类错误重试；需要 VIP、链接失效这类失败不会浪费次数' },
+          { key: 'download_retry_delay_base', label: '重试基础间隔（秒）', type: 'number', step: '0.5',
+            hint: '指数退避：第 n 次重试等待 base × 2^(n-1)，并带 ±20% 抖动' },
+          { key: 'download_timeout', label: '单任务超时（秒）', type: 'number',
+            hint: '整张专辑算一个任务，大歌单建议 1800 以上' },
+          { key: 'handler_timeout', label: '消息处理超时（秒）', type: 'number',
+            hint: '只覆盖「解析链接 + 入队」这段，不需要很大' },
+        ],
+      },
+      {
+        title: '通用',
+        fields: [
+          { key: 'download_path', label: '默认下载根目录', type: 'text' },
+          { key: 'auto_download_enabled', label: '收到链接自动开始下载', type: 'bool' },
+          { key: 'send_to_telegram', label: '下载完成后发送到 Telegram', type: 'bool' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'network', label: '网络与代理', desc: '访问 Telegram 与音源',
+    sections: [
+      {
+        title: '代理',
+        fields: [
+          { key: 'proxy_enabled', label: '启用代理', type: 'bool' },
+          { key: 'proxy_host', label: '代理地址', type: 'text',
+            hint: '形如 <code>http://192.168.1.10:7890</code> 或 <code>socks5://127.0.0.1:1080</code>' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'qb', label: 'qBittorrent', desc: '预留的种子下载集成',
+    sections: [
+      {
+        title: '连接',
+        fields: [
+          { key: 'qbittorrent_enabled', label: '启用 qBittorrent', type: 'bool' },
+          { key: 'qbittorrent_host', label: '主机', type: 'text' },
+          { key: 'qbittorrent_port', label: '端口', type: 'number' },
+          { key: 'qbittorrent_username', label: '用户名', type: 'text' },
+          { key: 'qbittorrent_password', label: '密码', type: 'password' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'system', label: '系统', desc: '日志、配置备份与重置',
+    sections: [
+      {
+        title: '日志',
+        fields: [
+          { key: 'log_level', label: '日志级别', type: 'select',
+            options: [['DEBUG', 'DEBUG（排查问题）'], ['INFO', 'INFO（默认）'], ['WARNING', 'WARNING'], ['ERROR', 'ERROR']] },
+          { key: 'log_to_file', label: '写入日志文件', type: 'bool' },
+          { key: 'log_to_console', label: '输出到控制台', type: 'bool' },
+        ],
+      },
+    ],
+  },
+];
+
+let config = {};
+let original = {};
+const dirty = new Set();
+
+function fieldInput(field, value) {
+  const id = `f_${field.key}`;
+  if (field.type === 'bool') {
+    return `<label class="switch">
+      <input type="checkbox" id="${id}" data-key="${field.key}" data-type="bool" ${value ? 'checked' : ''}>
+      <span class="switch-track"></span></label>`;
+  }
+  if (field.type === 'select') {
+    return `<select class="select" id="${id}" data-key="${field.key}" data-type="string">
+      ${field.options.map(([v, text]) => `<option value="${escapeHtml(v)}" ${String(value) === v ? 'selected' : ''}>${escapeHtml(text)}</option>`).join('')}
+    </select>`;
+  }
+  if (field.type === 'textarea') {
+    return `<textarea class="textarea input-mono" id="${id}" data-key="${field.key}"
+      data-type="string" rows="3">${escapeHtml(value ?? '')}</textarea>`;
+  }
+  const step = field.step ? `step="${field.step}"` : (field.type === 'number' ? 'step="1"' : '');
+  const placeholder = field.type === 'password' && value === '******' ? '已保存，留空表示不修改' : '';
+  return `<input class="${field.type === 'password' ? 'input input-mono' : 'input'}"
+    type="${field.type === 'password' ? 'password' : field.type === 'number' ? 'number' : 'text'}"
+    id="${id}" data-key="${field.key}" data-type="${field.type === 'number' ? 'number' : 'string'}"
+    ${step} value="${escapeHtml(value ?? '')}" placeholder="${escapeHtml(placeholder)}">`;
+}
+
+function fieldHtml(field, value) {
+  const hint = field.hint ? `<div class="field-hint">${field.hint}</div>` : '';
+  if (field.type === 'bool') {
+    return `<div class="switch-row">
+      <div class="switch-text">
+        <div class="switch-title">${escapeHtml(field.label)}</div>
+        ${field.sub ? `<div class="switch-sub">${escapeHtml(field.sub)}</div>` : ''}
+        ${hint}
+      </div>
+      ${fieldInput(field, value)}
+    </div>`;
+  }
+  return `<div class="field">
+    <label class="field-label" for="f_${field.key}">${escapeHtml(field.label)}</label>
+    ${fieldInput(field, value)}${hint}
+  </div>`;
+}
+
+function systemExtraHtml() {
+  return `<div class="card">
+    <div class="card-head"><div class="card-title">配置备份</div></div>
+    <div class="card-body">
+      <p class="small muted-2" style="margin-bottom:12px">
+        导出为 JSON。默认脱敏，Bot Token、Cookie、密码会被替换成 ******。
+      </p>
+      <div class="btn-row">
+        <button class="btn btn-sm" id="btnExport"><i data-icon="download" data-size="14"></i>导出配置</button>
+        <button class="btn btn-sm" id="btnExportFull" title="包含明文凭据，请妥善保管">
+          <i data-icon="key" data-size="14"></i>导出（含凭据）</button>
+        <button class="btn btn-sm" id="btnImport"><i data-icon="upload" data-size="14"></i>导入配置</button>
+      </div>
     </div>
-    
-    <script>
-        // 侧边栏切换
-        function toggleSidebar() {
-            const sidebar = document.getElementById('sidebar');
-            sidebar.classList.toggle('open');
-        }
-        
-        // 保存设置
-        async function saveAllSettings() {
-            const settings = {
-                telegram_bot_token: document.getElementById('telegram_token').value,
-                telegram_chat_id: document.getElementById('telegram_chat_id').value,
-                telegram_enabled: document.getElementById('telegram_enabled').checked,
-                download_path: document.getElementById('download_path').value,
-                max_concurrent: parseInt(document.getElementById('max_concurrent').value),
-                auto_retry: document.getElementById('auto_retry').checked,
-                netease_cookies: document.getElementById('netease_cookies').value,
-            };
-            
-            try {
-                const response = await fetch('/api/config/batch', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(settings)
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    showToast('✅ 设置已保存', 'success');
-                } else {
-                    showToast('❌ 保存失败: ' + result.error, 'error');
-                }
-            } catch (error) {
-                showToast('❌ 网络错误', 'error');
-            }
-        }
-        
-        // 测试网易云连接
-        async function testNeteaseConnection() {
-            showToast('🔄 测试中...', 'info');
-            
-            // 这里调用 API 测试连接
-            setTimeout(() => {
-                showToast('✅ 连接成功！', 'success');
-            }, 1500);
-        }
-        
-        // Toast 通知
-        function showToast(message, type = 'info') {
-            const toast = document.createElement('div');
-            toast.style.cssText = `
-                position: fixed;
-                top: 20px;
-                right: 20px;
-                padding: 16px 24px;
-                background: ${type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#3b82f6'};
-                color: white;
-                border-radius: 10px;
-                box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
-                z-index: 1000;
-                animation: slideIn 0.3s ease-out;
-            `;
-            toast.textContent = message;
-            document.body.appendChild(toast);
-            
-            setTimeout(() => {
-                toast.style.animation = 'slideOut 0.3s ease-out';
-                setTimeout(() => toast.remove(), 300);
-            }, 3000);
-        }
-        
-        // 加载设置
-        async function loadSettings() {
-            try {
-                const response = await fetch('/api/config');
-                const result = await response.json();
-                
-                if (result.success) {
-                    const config = result.data;
-                    
-                    document.getElementById('telegram_token').value = config.telegram_bot_token || '';
-                    document.getElementById('telegram_chat_id').value = config.telegram_chat_id || '';
-                    document.getElementById('telegram_enabled').checked = config.telegram_enabled !== false;
-                    document.getElementById('download_path').value = config.download_path || '/downloads';
-                    document.getElementById('max_concurrent').value = config.max_concurrent || 3;
-                    document.getElementById('auto_retry').checked = config.auto_retry !== false;
-                    document.getElementById('netease_cookies').value = config.netease_cookies || '';
-                }
-            } catch (error) {
-                console.error('加载设置失败:', error);
-            }
-        }
-        
-        // 页面加载时执行
-        document.addEventListener('DOMContentLoaded', loadSettings);
-    </script>
-</body>
-</html>
+    <div class="card-foot">
+      <span class="small muted grow">重置会清空全部配置并恢复默认值，账号数据也会一并重置。</span>
+      <button class="btn btn-sm btn-danger" id="btnReset"><i data-icon="trash" data-size="14"></i>重置</button>
+    </div>
+  </div>`;
+}
+
+/* 当前 tab 记在 URL hash 里：保存后整页会重渲染，不记的话用户会被
+   弹回第一个 tab，改完一堆东西找不到自己刚才在哪一页。 */
+function activeTabId() {
+  const wanted = (location.hash || '').replace('#', '');
+  return SCHEMA.some((t) => t.id === wanted) ? wanted : SCHEMA[0].id;
+}
+
+function switchTab(id) {
+  $$('.tab', document.getElementById('settingsNav'))
+    .forEach((t) => t.classList.toggle('active', t.dataset.tab === id));
+  $$('.settings-panel')
+    .forEach((p) => p.classList.toggle('active', p.dataset.panel === id));
+  if (location.hash !== `#${id}`) history.replaceState(null, '', `#${id}`);
+}
+
+function renderAll() {
+  const nav = document.getElementById('settingsNav');
+  const panels = document.getElementById('settingsPanels');
+  const active = activeTabId();
+
+  nav.innerHTML = SCHEMA.map((tab) => `
+    <div class="tab ${tab.id === active ? 'active' : ''}" data-tab="${tab.id}">${escapeHtml(tab.label)}</div>`).join('');
+
+  panels.innerHTML = SCHEMA.map((tab) => `
+    <div class="settings-panel ${tab.id === active ? 'active' : ''}" data-panel="${tab.id}">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title">${escapeHtml(tab.label)}</div>
+            <div class="card-desc">${escapeHtml(tab.desc)}</div>
+          </div>
+        </div>
+        <div class="card-body">
+          ${tab.sections.map((section, si) => `
+            ${section.title ? `<div class="strong small mb-1" style="color:var(--text-2)">${escapeHtml(section.title)}</div>` : ''}
+            ${section.fields.map((f) => fieldHtml(f, config[f.key])).join('')}
+            ${si < tab.sections.length - 1 ? '<div class="divider"></div>' : ''}
+          `).join('')}
+        </div>
+      </div>
+      ${tab.id === 'system' ? systemExtraHtml() : ''}
+    </div>`).join('');
+
+  hydrateIcons(panels);
+}
+
+function updateSaveBar() {
+  const bar = document.getElementById('saveBar');
+  bar.classList.toggle('hidden', dirty.size === 0);
+  document.getElementById('saveCount').textContent = `${dirty.size} 项未保存`;
+}
+
+function bindEvents() {
+  document.getElementById('settingsNav').addEventListener('click', (e) => {
+    const tab = e.target.closest('[data-tab]');
+    if (!tab) return;
+    switchTab(tab.dataset.tab);
+  });
+
+  window.addEventListener('hashchange', () => switchTab(activeTabId()));
+
+  const panels = document.getElementById('settingsPanels');
+  panels.addEventListener('change', (e) => {
+    const el = e.target.closest('[data-key]');
+    if (!el) return;
+    const key = el.dataset.key;
+    let value;
+    if (el.dataset.type === 'bool') value = el.checked;
+    else if (el.dataset.type === 'number') value = el.value === '' ? 0 : Number(el.value);
+    else value = el.value;
+
+    if (value === '******' || (el.type === 'password' && value === '')) {
+      dirty.delete(key);
+    } else {
+      config[key] = value;
+      if (JSON.stringify(original[key]) !== JSON.stringify(value)) dirty.add(key);
+      else dirty.delete(key);
+    }
+    updateSaveBar();
+  });
+
+  panels.addEventListener('click', async (e) => {
+    const id = e.target.closest('button')?.id;
+    if (!id) return;
+
+    if (id === 'btnExport' || id === 'btnExportFull') {
+      const full = id === 'btnExportFull';
+      if (full) {
+        const ok = await confirmDialog({
+          title: '导出包含明文凭据？', okText: '确认导出', danger: true,
+          desc: '文件里会有 Bot Token、网易云 Cookie、qBittorrent 密码，请勿放在公共位置。',
+        });
+        if (!ok) return;
+      }
+      try {
+        const data = await api(`/api/config/export?secrets=${full}`);
+        const blob = new Blob([data], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `music-bot-config-${Date.now()}.json`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        toast('已导出', 'ok');
+      } catch (err) { toast(err.message, 'err'); }
+    }
+
+    if (id === 'btnImport') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'application/json';
+      input.onchange = async () => {
+        if (!input.files.length) return;
+        const text = await input.files[0].text();
+        try {
+          await api('/api/config/import', { method: 'POST', body: { config: text } });
+          toast('配置已导入', 'ok');
+          await loadConfig();
+        } catch (err) { toast(err.message, 'err'); }
+      };
+      input.click();
+    }
+
+    if (id === 'btnReset') {
+      const ok = await confirmDialog({
+        title: '重置全部配置？', danger: true, okText: '确认重置',
+        desc: '所有设置会恢复默认值，包括 Telegram 凭据与管理员账号，此操作不可撤销。',
+      });
+      if (!ok) return;
+      try {
+        await api('/api/config/reset', { method: 'POST' });
+        toast('已重置', 'ok');
+        setTimeout(() => window.location.reload(), 800);
+      } catch (err) { toast(err.message, 'err'); }
+    }
+  });
+}
+
+async function loadConfig() {
+  config = await api('/api/config');
+  original = JSON.parse(JSON.stringify(config));
+  dirty.clear();
+  updateSaveBar();
+  renderAll();
+}
+
+document.getElementById('btnSave').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  const payload = {};
+  dirty.forEach((key) => { payload[key] = config[key]; });
+  if (!Object.keys(payload).length) return;
+
+  setBusy(btn, true, '保存中…');
+  try {
+    await api('/api/config', { method: 'POST', body: payload });
+    if ('download_max_concurrent' in payload) {
+      await api('/api/queue/config', {
+        method: 'POST',
+        body: { max_concurrent: Number(payload.download_max_concurrent) },
+      });
+    }
+    toast('配置已保存', 'ok');
+    await loadConfig();
+  } catch (err) {
+    toast(err.message, 'err');
+  } finally {
+    setBusy(btn, false);
+  }
+});
+
+document.getElementById('btnDiscard').addEventListener('click', () => loadConfig());
+document.getElementById('btnReload').addEventListener('click', () => {
+  loadConfig().then(() => toast('已重新加载', 'ok'));
+});
+
+document.getElementById('btnTelegramTest').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  setBusy(btn, true, '发送中…');
+  try {
+    const result = await api('/api/telegram/test', { method: 'POST' });
+    toast(result.message || '已发送', 'ok');
+  } catch (err) {
+    toast(err.message, 'err');
+  } finally {
+    setBusy(btn, false);
+  }
+});
+
+loadConfig().then(bindEvents).catch((e) => toast(e.message, 'err'));
+</script>
+{% endblock %}

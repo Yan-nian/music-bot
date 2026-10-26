@@ -12,7 +12,7 @@ import asyncio
 import logging
 from typing import Optional, Dict, Any, Tuple
 from urllib.parse import urlparse
-from flask import Blueprint, jsonify, request, render_template
+from flask import Blueprint, jsonify, request, render_template, redirect
 
 logger = logging.getLogger(__name__)
 
@@ -249,7 +249,21 @@ def run_async(coro):
 def create_tg_setup_blueprint() -> Blueprint:
     """创建 Telegram 设置蓝图"""
     bp = Blueprint("tg_setup", __name__, url_prefix="/tg")
-    
+
+    @bp.before_request
+    def _require_login():
+        """整个蓝图都需要登录。
+
+        这块能拿到 Telegram 账号的完整登录凭据，原来没有任何鉴权，
+        任何人访问 /tg/setup 都能生成别人的 Session。
+        """
+        from flask import session, request as _req
+        if not session.get("logged_in"):
+            if _req.method == "GET":
+                return redirect("/login")
+            return jsonify({"ok": False, "error": "未登录"}), 401
+        return None
+
     @bp.route("/setup")
     def setup_page():
         """Telegram 设置页面"""

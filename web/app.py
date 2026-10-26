@@ -7,12 +7,20 @@ Web 配置服务
 
 import os
 import sys
+import json
+import time
 import logging
 import hashlib
 import secrets
+import threading
+import datetime as dt
+from collections import defaultdict
 from functools import wraps
 from pathlib import Path
-from flask import Flask, Blueprint, jsonify, request, render_template, send_from_directory, session, redirect, url_for
+from typing import Optional
+from flask import (Flask, Blueprint, jsonify, request, render_template,
+                   session, redirect, url_for)
+from werkzeug.security import generate_password_hash, check_password_hash
 
 # 添加父目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -51,6 +59,44 @@ config_manager: ConfigManager = None
 DEFAULT_USERNAME = 'admin'
 DEFAULT_PASSWORD = 'admin'
 
+# 登录失败限流（内存级，进程重启即清空）
+_login_failures: dict = defaultdict(lambda: {'count': 0, 'until': 0.0})
+_login_lock = threading.Lock()
+LOGIN_MAX_FAILURES = 5
+LOGIN_LOCKOUT_SECONDS = 300
+
+
+def _client_ip() -> str:
+    forwarded = request.headers.get('X-Forwarded-For', '')
+    if forwarded:
+        return forwarded.split(',')[0].strip()
+    return request.remote_addr or 'unknown'
+
+
+def _check_login_locked(ip: str) -> int:
+    """返回剩余锁定秒数，0 表示未锁定"""
+    with _login_lock:
+        record = _login_failures[ip]
+        remain = record['until'] - time.time()
+        if remain > 0:
+            return int(remain)
+        return 0
+
+
+def _record_login_failure(ip: str):
+    with _login_lock:
+        record = _login_failures[ip]
+        record['count'] += 1
+        if record['count'] >= LOGIN_MAX_FAILURES:
+            record['until'] = time.time() + LOGIN_LOCKOUT_SECONDS
+            record['count'] = 0
+            logger.warning(f"🔒 IP {ip} 登录失败次数过多，锁定 {LOGIN_LOCKOUT_SECONDS}s")
+
+
+def _reset_login_failures(ip: str):
+    with _login_lock:
+        _login_failures.pop(ip, None)
+
 
 # 需要掩码的敏感配置项（不再明文返回前端）
 SENSITIVE_KEYS = {
@@ -71,20 +117,33 @@ def _get_password_salt() -> str:
 
 
 def hash_password(password: str) -> str:
-    """加盐哈希密码（新格式以 salted: 前缀标识）"""
-    salt = _get_password_salt()
-    return 'salted:' + hashlib.sha256((salt + password).encode()).hexdigest()
+    """PBKDF2 哈希密码
+
+    旧实现是单轮 sha256(salt+password)，对离线爆破几乎没有抵抗力。
+    werkzeug 已经在依赖里（Flask 自带），换成 PBKDF2 零成本。
+    """
+    return generate_password_hash(password, method='pbkdf2:sha256:260000')
 
 
 def verify_password(password: str, stored: str) -> bool:
-    """验证密码，兼容旧的无盐 sha256 格式"""
+    """验证密码，兼容三种历史格式"""
     if not stored:
         return False
+    if stored.startswith(('pbkdf2:', 'scrypt:')):
+        try:
+            return check_password_hash(stored, password)
+        except (ValueError, TypeError):
+            return False
     if stored.startswith('salted:'):
+        # 旧的 sha256(salt+password)
         salt = _get_password_salt()
         return 'salted:' + hashlib.sha256((salt + password).encode()).hexdigest() == stored
-    # 旧格式兼容（无盐 sha256）
+    # 最老的裸 sha256
     return hashlib.sha256(password.encode()).hexdigest() == stored
+
+
+def _needs_rehash(stored: str) -> bool:
+    return bool(stored) and not stored.startswith(('pbkdf2:', 'scrypt:'))
 
 
 def mask_sensitive(config: dict) -> dict:
@@ -123,11 +182,20 @@ def init_app(db_path: str = None):
         config_manager.set_config('flask_secret_key', secret)
     app.secret_key = secret
 
-    # 初始化默认管理员账号（如果不存在）
+    # 初始化默认管理员账号。
+    # 旧版本硬编码 admin/admin 且不提示修改；现在首次启动生成随机密码，
+    # 通过 stdout 打印一次（docker logs 可见），避免公网部署被直接登录。
     if not config_manager.get_config('admin_username'):
+        initial_password = os.environ.get('ADMIN_PASSWORD') or secrets.token_urlsafe(9)
         config_manager.set_config('admin_username', DEFAULT_USERNAME)
-        config_manager.set_config('admin_password', hash_password(DEFAULT_PASSWORD))
-    
+        config_manager.set_config('admin_password', hash_password(initial_password))
+        print('=' * 62, flush=True)
+        print('  首次启动，已生成管理后台账号', flush=True)
+        print(f'  用户名: {DEFAULT_USERNAME}', flush=True)
+        print(f'  密  码: {initial_password}', flush=True)
+        print('  登录后请立即在「账号」页修改密码', flush=True)
+        print('=' * 62, flush=True)
+
     # 注册 Telegram Setup Blueprint
     from .tg_setup import create_tg_setup_blueprint, init_tg_setup
     tg_setup_bp = create_tg_setup_blueprint()
@@ -165,18 +233,27 @@ def api_login():
         
         if not username or not password:
             return jsonify({'success': False, 'error': '用户名和密码不能为空'}), 400
-        
+
+        ip = _client_ip()
+        locked = _check_login_locked(ip)
+        if locked:
+            return jsonify({
+                'success': False,
+                'error': f'尝试次数过多，请 {locked} 秒后再试'
+            }), 429
+
         # 验证账号密码
         stored_username = config_manager.get_config('admin_username') or DEFAULT_USERNAME
         stored_password = config_manager.get_config('admin_password') or hash_password(DEFAULT_PASSWORD)
         
         if username == stored_username and verify_password(password, stored_password):
-            # 旧无盐密码自动升级为加盐格式
-            if not stored_password.startswith('salted:'):
+            # 旧格式（sha256）密码在登录成功时自动升级为 PBKDF2
+            if _needs_rehash(stored_password):
                 config_manager.set_config('admin_password', hash_password(password))
+            _reset_login_failures(ip)
             session['logged_in'] = True
             session['username'] = username
-            session.permanent = remember
+            session.permanent = bool(remember)
             
             logger.info(f"用户 {username} 登录成功")
             return jsonify({
@@ -185,7 +262,8 @@ def api_login():
                 'redirect': '/'
             })
         else:
-            logger.warning(f"用户 {username} 登录失败：密码错误")
+            _record_login_failure(ip)
+            logger.warning(f"用户 {username} 登录失败：密码错误 (IP: {ip})")
             return jsonify({'success': False, 'error': '用户名或密码错误'}), 401
             
     except Exception as e:
@@ -226,7 +304,7 @@ def api_auth_status():
 @login_required
 def index():
     """仪表盘页面"""
-    return render_template('index_new.html')
+    return render_template('index.html')
 
 
 @app.route('/settings')
@@ -283,8 +361,8 @@ def api_change_password():
         if new_password != confirm_password:
             return jsonify({'success': False, 'error': '两次输入的新密码不一致'}), 400
         
-        if len(new_password) < 4:
-            return jsonify({'success': False, 'error': '新密码长度至少4位'}), 400
+        if len(new_password) < 8:
+            return jsonify({'success': False, 'error': '新密码长度至少 8 位'}), 400
         
         # 验证当前密码
         stored_password = config_manager.get_config('admin_password') or hash_password(DEFAULT_PASSWORD)
@@ -449,12 +527,19 @@ def reset_config():
 @app.route('/api/config/export', methods=['GET'])
 @login_required
 def export_config():
-    """导出配置"""
+    """导出配置（敏感项按需脱敏）
+
+    旧实现直接返回全量明文，包含 telegram_bot_token、netease_cookies、
+    qbittorrent_password——一份导出文件泄露等于整套凭据泄露。
+    """
     try:
-        config_json = config_manager.export_config()
+        include_secrets = request.args.get('secrets', 'false').lower() == 'true'
+        config = config_manager.get_all_config()
+        if not include_secrets:
+            config = mask_sensitive(config)
         return jsonify({
             'success': True,
-            'data': config_json
+            'data': json.dumps(config, ensure_ascii=False, indent=2)
         })
     except Exception as e:
         logger.error(f"导出配置失败: {e}")
@@ -585,8 +670,8 @@ def add_playlist():
         # 如果没有提供歌单名称，尝试获取
         if not playlist_name:
             try:
-                from downloaders.netease import NeteaseDownloader
-                downloader = NeteaseDownloader(config_manager)
+                from downloaders import get_downloader
+                downloader = get_downloader('netease', config_manager)
                 songs, fetched_name = downloader.get_playlist_songs(playlist_id)
                 if fetched_name and fetched_name != '未知歌单':
                     playlist_name = fetched_name
@@ -714,8 +799,8 @@ def sync_playlist(playlist_id: str):
         download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
         
         # 创建下载器并执行增量下载
-        from downloaders.netease import NeteaseDownloader
-        downloader = NeteaseDownloader(config_manager)
+        from downloaders import get_downloader
+        downloader = get_downloader('netease', config_manager)
         
         result = downloader.download_playlist_incremental(
             playlist_id=playlist_id,
@@ -752,8 +837,8 @@ def check_playlist_updates(playlist_id: str):
         platform = request.args.get('platform', 'netease')
         
         # 创建下载器获取歌单信息
-        from downloaders.netease import NeteaseDownloader
-        downloader = NeteaseDownloader(config_manager)
+        from downloaders import get_downloader
+        downloader = get_downloader('netease', config_manager)
         
         songs, playlist_name = downloader.get_playlist_songs(playlist_id)
         
@@ -807,8 +892,8 @@ def sync_all_playlists():
         
         download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
         
-        from downloaders.netease import NeteaseDownloader
-        downloader = NeteaseDownloader(config_manager)
+        from downloaders import get_downloader
+        downloader = get_downloader('netease', config_manager)
         
         results = []
         total_new_songs = 0
@@ -912,8 +997,8 @@ def retry_failed_songs(playlist_id: str):
         
         download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
         
-        from downloaders.netease import NeteaseDownloader
-        downloader = NeteaseDownloader(config_manager)
+        from downloaders import get_downloader
+        downloader = get_downloader('netease', config_manager)
         
         success_count = 0
         for song in failed_songs:
@@ -971,8 +1056,8 @@ def refresh_playlist_metadata(playlist_id: str):
     try:
         download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
         
-        from downloaders.netease import NeteaseDownloader
-        downloader = NeteaseDownloader(config_manager)
+        from downloaders import get_downloader
+        downloader = get_downloader('netease', config_manager)
         
         result = downloader.refresh_playlist_metadata(
             playlist_id=playlist_id,
@@ -998,8 +1083,8 @@ def refresh_all_metadata():
     try:
         download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
         
-        from downloaders.netease import NeteaseDownloader
-        downloader = NeteaseDownloader(config_manager)
+        from downloaders import get_downloader
+        downloader = get_downloader('netease', config_manager)
         
         result = downloader.refresh_metadata(download_dir=download_dir)
         
@@ -1192,26 +1277,29 @@ def logout():
     return redirect(url_for('login'))
 
 
-# ==================== 静态文件 ====================
-
-@app.route('/static/<path:filename>')
-def serve_static(filename):
-    """提供静态文件"""
-    return send_from_directory(app.static_folder, filename)
-
-
 # ==================== 错误处理 ====================
 
 @app.errorhandler(404)
 def not_found(e):
-    """404 错误处理"""
-    return jsonify({'success': False, 'error': 'Not Found'}), 404
+    """404 错误处理：API 返回 JSON，页面返回简单提示"""
+    if request.path.startswith('/api/'):
+        return jsonify({'success': False, 'error': 'Not Found'}), 404
+    return ('<div style="font-family:system-ui;padding:60px;text-align:center;color:#4b5563">'
+            '<h2 style="font-weight:600">404 · 页面不存在</h2>'
+            '<p><a href="/" style="color:#4f46e5">返回首页</a></p></div>'), 404
 
 
 @app.errorhandler(500)
 def internal_error(e):
     """500 错误处理"""
-    return jsonify({'success': False, 'error': 'Internal Server Error'}), 500
+    logger.exception(f"未捕获的服务器错误: {e}")
+    if request.path.startswith('/api/'):
+        return jsonify({'success': False, 'error': 'Internal Server Error'}), 500
+    return ('<div style="font-family:system-ui;padding:60px;text-align:center;color:#4b5563">'
+            '<h2 style="font-weight:600">500 · 服务端错误</h2>'
+            '<p>详细信息请查看运行日志。</p>'
+            '<p><a href="/logs" style="color:#4f46e5">查看日志</a> · '
+            '<a href="/" style="color:#4f46e5">返回首页</a></p></div>'), 500
 
 
 def run_server(host: str = '0.0.0.0', port: int = 5000, debug: bool = False):
@@ -1242,11 +1330,468 @@ def api_queue_config():
         mc = data.get('max_concurrent')
         if mc and isinstance(mc, int) and mc >= 1:
             from download_queue import get_download_queue
-            get_download_queue().set_max_concurrent(mc)
+            # 信号量属于 Bot 的事件循环，必须切线程改，不能在 Flask 线程里直接动
+            get_download_queue().set_max_concurrent_threadsafe(mc)
+            config_manager.set_config('download_max_concurrent', mc)
             return jsonify({'success': True, 'message': f'最大并发数已设为 {mc}'})
         return jsonify({'success': False, 'error': 'invalid max_concurrent'}), 400
     except Exception as e:
         logger.error(f"更新队列配置失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/queue/cancel/<task_id>', methods=['POST'])
+@login_required
+def api_queue_cancel(task_id: str):
+    """取消排队中的任务"""
+    try:
+        from download_queue import get_download_queue
+        ok = get_download_queue().cancel_threadsafe(task_id)
+        return jsonify({'success': ok, 'message': '已请求取消' if ok else '任务不存在或已结束'})
+    except Exception as e:
+        logger.error(f"取消任务失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ==================== 网易云登录态 / Cookie 自动刷新 ====================
+
+@app.route('/api/telegram/test', methods=['POST'])
+@login_required
+def api_telegram_test():
+    """给配置里的用户发一条测试消息，验证 token / 代理 / 用户 ID 是否正确"""
+    try:
+        from .tg_notifier import send_telegram_notification
+        message = (
+            "✅ Music Bot 连通性测试\n\n"
+            "如果你看到这条消息，说明 Bot Token、代理与用户 ID 都配置正确。"
+        )
+        ok = send_telegram_notification(config_manager, message)
+        if ok:
+            return jsonify({'success': True, 'message': '已发送，请查看 Telegram'})
+        return jsonify({
+            'success': False,
+            'error': '发送失败，请检查 Bot Token、允许的用户 ID 与代理设置'
+        }), 400
+    except Exception as e:
+        logger.error(f"发送测试消息失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _netease_keeper():
+    """取共享的 Cookie 守护实例"""
+    from cookie_keeper import get_keeper
+    return get_keeper(config_manager)
+
+
+@app.route('/api/netease/status', methods=['GET'])
+@login_required
+def api_netease_status():
+    """网易云登录态（读缓存，不发网络请求）"""
+    try:
+        keeper = _netease_keeper()
+        meta = keeper.get_meta()
+        cookies = keeper.get_cookies()
+        expires_at = meta.get('expires_at')
+        days_left = None
+        if expires_at:
+            days_left = round((expires_at / 1000 - time.time()) / 86400, 1)
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'state': meta.get('state', 'unknown'),
+                'nickname': meta.get('nickname', ''),
+                'vip_label': meta.get('vip_label', ''),
+                'avatar': meta.get('avatar', ''),
+                'checked_at': meta.get('checked_at'),
+                'refreshed_at': meta.get('refreshed_at'),
+                'expires_at': expires_at,
+                'days_left': days_left,
+                'last_error': meta.get('last_error', ''),
+                'has_cookies': bool(cookies),
+                'cookie_count': len(cookies.split(';')) if cookies else 0,
+                'auto_refresh': bool(config_manager.get_config('netease_auto_refresh_enabled', True)),
+                'check_interval': config_manager.get_config('netease_cookie_check_interval', 1800),
+            }
+        })
+    except Exception as e:
+        logger.error(f"获取网易云状态失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/netease/check', methods=['POST'])
+@login_required
+def api_netease_check():
+    """立即检测登录态（会发一次网络请求）"""
+    try:
+        meta = _netease_keeper().check_once()
+        return jsonify({'success': True, 'data': meta})
+    except Exception as e:
+        logger.error(f"检测网易云登录态失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/netease/refresh', methods=['POST'])
+@login_required
+def api_netease_refresh():
+    """手动续期会话"""
+    try:
+        keeper = _netease_keeper()
+        from downloaders.netease_auth import NeteaseAuth
+        auth = NeteaseAuth(config_manager)
+        result = auth.refresh(keeper.get_cookies())
+        if result.get('ok'):
+            keeper.save_cookies(result['cookies'], result.get('expires_at'), source='refresh')
+            return jsonify({'success': True, 'message': '会话已续期', 'data': result})
+        return jsonify({'success': False, 'error': result.get('message', '续期失败')}), 400
+    except Exception as e:
+        logger.error(f"续期失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/netease/cookies', methods=['POST'])
+@login_required
+def api_netease_cookies():
+    """手动保存 cookie 字符串"""
+    try:
+        data = request.get_json() or {}
+        cookie_str = (data.get('cookies') or '').strip()
+        if not cookie_str:
+            return jsonify({'success': False, 'error': 'cookie 不能为空'}), 400
+
+        keeper = _netease_keeper()
+        from downloaders.netease_auth import NeteaseAuth
+        info = NeteaseAuth(config_manager).check(cookie_str)
+        if not info.get('logged_in'):
+            return jsonify({
+                'success': False,
+                'error': 'cookie 无效或已过期，请用扫码登录'
+            }), 400
+
+        keeper.save_cookies(cookie_str, None, account=info, source='manual')
+        return jsonify({
+            'success': True,
+            'message': f"已登录为 {info.get('nickname')}",
+            'data': info,
+        })
+    except Exception as e:
+        logger.error(f"保存 cookie 失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/netease/logout', methods=['POST'])
+@login_required
+def api_netease_logout():
+    """清除已保存的 cookie"""
+    try:
+        _netease_keeper().clear_cookies()
+        return jsonify({'success': True, 'message': '已退出网易云登录'})
+    except Exception as e:
+        logger.error(f"清除 cookie 失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/netease/qr', methods=['POST'])
+@login_required
+def api_netease_qr_create():
+    """生成扫码登录二维码"""
+    try:
+        from downloaders.netease_auth import NeteaseAuth
+        result = NeteaseAuth(config_manager).qr_create()
+        if not result.get('ok'):
+            return jsonify({'success': False, 'error': result.get('message', '生成失败')}), 400
+        return jsonify({'success': True, 'data': result})
+    except Exception as e:
+        logger.error(f"生成二维码失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/netease/qr/<unikey>', methods=['GET'])
+@login_required
+def api_netease_qr_check(unikey: str):
+    """轮询扫码结果；803 时自动写回 cookie"""
+    try:
+        from downloaders.netease_auth import NeteaseAuth
+        result = NeteaseAuth(config_manager).qr_check(unikey)
+        code = result.get('code')
+
+        if code == 803 and result.get('cookies'):
+            keeper = _netease_keeper()
+            keeper.save_cookies(
+                result['cookies'],
+                result.get('expires_at'),
+                account=result.get('account') or {'logged_in': True},
+                source='qrcode',
+            )
+            account = result.get('account') or {}
+            return jsonify({
+                'success': True,
+                'data': {
+                    'code': code,
+                    'message': '登录成功',
+                    'nickname': account.get('nickname', ''),
+                }
+            })
+
+        return jsonify({'success': True, 'data': {'code': code, 'message': result.get('message', '')}})
+    except Exception as e:
+        logger.error(f"扫码轮询失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ==================== 后台任务 API ====================
+
+def _job_payload(job):
+    return job.to_dict()
+
+
+def _local_date_of(utc_timestamp) -> Optional[dt.date]:
+    """把数据库里的 UTC 时间戳换算成本地日期。
+
+    SQLite 的 CURRENT_TIMESTAMP 一律写 UTC，前端也是按 UTC 解析后再本地化。
+    后端做「今日」统计时同样要先转本地，否则东八区 0:00-8:00 的下载会被漏掉。
+    """
+    if not utc_timestamp:
+        return None
+    text = str(utc_timestamp)[:19]
+    try:
+        parsed = dt.datetime.strptime(text, '%Y-%m-%d %H:%M:%S')
+    except ValueError:
+        try:
+            parsed = dt.datetime.fromisoformat(str(utc_timestamp).replace('Z', '+00:00'))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone().date()
+
+
+@app.route('/api/jobs', methods=['GET'])
+@login_required
+def api_jobs():
+    """任务列表"""
+    from .jobs import job_manager
+    kind = request.args.get('kind')
+    return jsonify({'success': True, 'data': job_manager.list(kind=kind)})
+
+
+@app.route('/api/jobs/<job_id>', methods=['GET'])
+@login_required
+def api_job_detail(job_id: str):
+    """任务详情（前端轮询用）"""
+    from .jobs import job_manager
+    job = job_manager.get(job_id)
+    if not job:
+        return jsonify({'success': False, 'error': '任务不存在'}), 404
+    return jsonify({'success': True, 'data': _job_payload(job)})
+
+
+@app.route('/api/jobs/<job_id>/cancel', methods=['POST'])
+@login_required
+def api_job_cancel(job_id: str):
+    from .jobs import job_manager
+    ok = job_manager.cancel(job_id)
+    return jsonify({'success': ok, 'message': '已请求取消' if ok else '无法取消'})
+
+
+@app.route('/api/jobs/playlist-sync', methods=['POST'])
+@login_required
+def api_job_playlist_sync():
+    """异步同步单个歌单"""
+    try:
+        data = request.get_json() or {}
+        playlist_id = str(data.get('playlist_id', '')).strip()
+        platform = data.get('platform', 'netease')
+        if not playlist_id:
+            return jsonify({'success': False, 'error': '缺少 playlist_id'}), 400
+
+        from .jobs import job_manager
+        from downloaders import get_downloader
+
+        playlist = config_manager.get_subscribed_playlist(playlist_id, platform) or {}
+        title = playlist.get('playlist_name') or f'歌单 {playlist_id}'
+
+        def _run(job):
+            downloader = get_downloader(platform, config_manager)
+            path_key = 'netease_download_path' if platform == 'netease' else f'{platform}_download_path'
+            download_dir = config_manager.get_config(path_key, '/downloads')
+            job.update(progress=1, total=3, message='拉取歌单信息')
+            result = downloader.download_playlist_incremental(playlist_id, download_dir)
+            job.update(progress=3, message='写入记录')
+            return {'success': bool(result.get('success')), 'detail': result}
+
+        job = job_manager.submit('playlist_sync', f'同步歌单 · {title}', _run, total=3)
+        return jsonify({'success': True, 'data': _job_payload(job)})
+    except Exception as e:
+        logger.exception(f"提交歌单同步任务失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/jobs/playlist-sync-all', methods=['POST'])
+@login_required
+def api_job_playlist_sync_all():
+    """异步同步全部启用的歌单"""
+    try:
+        from .jobs import job_manager
+        from downloaders import get_downloader
+
+        playlists = config_manager.get_subscribed_playlists(enabled_only=True)
+        if not playlists:
+            return jsonify({'success': False, 'error': '没有启用的订阅歌单'}), 400
+
+        def _run(job):
+            job.update(total=len(playlists), progress=0)
+            downloader = get_downloader('netease', config_manager)
+            download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
+            ok = 0
+            for index, item in enumerate(playlists, 1):
+                if job.cancelled:
+                    break
+                name = item.get('playlist_name') or item['playlist_id']
+                job.update(progress=index - 1, message=f'({index}/{len(playlists)}) {name}')
+                try:
+                    result = downloader.download_playlist_incremental(
+                        item['playlist_id'], download_dir)
+                    ok += 1 if result.get('success') else 0
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"同步歌单 {name} 失败: {e}")
+                job.update(progress=index)
+            return {'synced': ok, 'total': len(playlists)}
+
+        job = job_manager.submit('playlist_sync_all', f'同步全部歌单（{len(playlists)} 个）',
+                                 _run, total=len(playlists))
+        return jsonify({'success': True, 'data': _job_payload(job)})
+    except Exception as e:
+        logger.exception(f"提交全量同步任务失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/jobs/retry-failed', methods=['POST'])
+@login_required
+def api_job_retry_failed():
+    """异步重试某个歌单的失败曲目"""
+    try:
+        data = request.get_json() or {}
+        playlist_id = str(data.get('playlist_id', '')).strip()
+        if not playlist_id:
+            return jsonify({'success': False, 'error': '缺少 playlist_id'}), 400
+
+        from .jobs import job_manager
+        from downloaders import get_downloader
+
+        failed = config_manager.get_failed_songs(playlist_id)
+        if not failed:
+            return jsonify({'success': False, 'error': '没有失败的曲目'}), 400
+
+        def _run(job):
+            downloader = get_downloader('netease', config_manager)
+            download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
+            job.update(total=len(failed), progress=0)
+            done = 0
+            for index, song in enumerate(failed, 1):
+                if job.cancelled:
+                    break
+                job.update(progress=index - 1,
+                           message=f"({index}/{len(failed)}) {song.get('song_name')}")
+                try:
+                    downloader.download_song(song['song_id'], download_dir)
+                    config_manager.mark_song_downloaded(playlist_id, song['song_id'])
+                    config_manager.clear_song_fail_status(playlist_id, song['song_id'])
+                    done += 1
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"重试失败曲目出错: {e}")
+                job.update(progress=index)
+            return {'retried': done, 'total': len(failed)}
+
+        job = job_manager.submit('retry_failed', f'重试失败曲目（{len(failed)} 首）',
+                                 _run, total=len(failed))
+        return jsonify({'success': True, 'data': _job_payload(job)})
+    except Exception as e:
+        logger.exception(f"提交重试任务失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/jobs/refresh-metadata', methods=['POST'])
+@login_required
+def api_job_refresh_metadata():
+    """异步刷新已下载文件的元数据"""
+    try:
+        data = request.get_json() or {}
+        playlist_id = str(data.get('playlist_id', '')).strip()
+
+        from .jobs import job_manager
+        from downloaders import get_downloader
+
+        def _run(job):
+            downloader = get_downloader('netease', config_manager)
+            download_dir = config_manager.get_config('netease_download_path', '/downloads/netease')
+            job.update(total=1, progress=0, message='扫描并修复元数据')
+            if playlist_id:
+                result = downloader.refresh_playlist_metadata(playlist_id, download_dir)
+            else:
+                result = downloader.refresh_metadata(download_dir)
+            return result
+
+        job = job_manager.submit('refresh_metadata', '刷新元数据', _run, total=1)
+        return jsonify({'success': True, 'data': _job_payload(job)})
+    except Exception as e:
+        logger.exception(f"提交元数据任务失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ==================== 仪表盘聚合接口 ====================
+
+@app.route('/api/dashboard', methods=['GET'])
+@login_required
+def api_dashboard():
+    """首页一次拿齐：统计 + 队列 + 最近下载 + 平台状态
+
+    旧首页 4 个统计卡片是写死的假数据（1234 / 1180 / 3 / 56），
+    这里把真实数据一次性聚合出来，省得前端发 4 个请求。
+    """
+    try:
+        from download_queue import get_download_queue
+
+        history = config_manager.get_download_history(limit=200)
+        queue = get_download_queue().get_status()
+        playlists = config_manager.get_subscribed_playlists()
+        meta = _netease_keeper().get_meta()
+
+        song_records = [h for h in history if h.get('content_type') == 'song']
+        album_records = [h for h in history if h.get('content_type') == 'album']
+        playlist_records = [h for h in history if h.get('content_type') == 'playlist']
+
+        total_downloaded = len(song_records) + len(album_records) + len(playlist_records)
+        total_bytes = sum(int(h.get('file_size') or 0) for h in song_records)
+        # created_at 由 SQLite CURRENT_TIMESTAMP 写入，是 UTC。
+        # 直接跟本地日期字符串比较的话，东八区用户 0:00-8:00 之间的下载会算进「昨天」。
+        today_count = sum(1 for h in history if _local_date_of(h.get('created_at')) == dt.date.today())
+
+        # 把歌单的曲目统计带上，前端可直接画进度条
+        for playlist in playlists:
+            playlist['stats'] = config_manager.get_playlist_stats(playlist['playlist_id'])
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'stats': {
+                    'total_downloads': total_downloaded,
+                    'today_downloads': today_count,
+                    'total_size': total_bytes,
+                    'playlist_count': len(playlists),
+                    'active_playlists': sum(1 for p in playlists if p.get('enabled')),
+                },
+                'queue': queue,
+                'netease': {
+                    'state': meta.get('state', 'unknown'),
+                    'nickname': meta.get('nickname', ''),
+                    'vip_label': meta.get('vip_label', ''),
+                },
+                'recent': history[:8],
+            }
+        })
+    except Exception as e:
+        logger.exception(f"获取仪表盘数据失败: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

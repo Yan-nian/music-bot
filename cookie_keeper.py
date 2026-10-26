@@ -240,13 +240,18 @@ class CookieKeeper:
         self._save_meta(notified_at=int(time.time()))
 
 
-# 进程内共享实例：Bot 启动时创建并注册，Web 侧通过 get_keeper() 拿到同一个，
-# 这样 Web 扫码登录写回的 cookie 能立刻热重载到 Bot 正在用的下载器上。
+# 进程内共享实例：Web 与 Bot 都通过 get_keeper() 拿同一个，
+# 这样扫码登录写回的 cookie 能立刻热重载到正在用的下载器上，
+# 也不会出现两个守护线程同时检测、重复续期的情况。
 _keeper_instance: Optional[CookieKeeper] = None
 _keeper_lock = threading.Lock()
 
 
 def get_keeper(config_manager=None) -> CookieKeeper:
+    """取（必要时创建）进程内唯一的 CookieKeeper。
+
+    start() 本身是幂等的，所以调用方可以放心每次启动都 start()。
+    """
     global _keeper_instance
     with _keeper_lock:
         if _keeper_instance is None:
@@ -254,12 +259,5 @@ def get_keeper(config_manager=None) -> CookieKeeper:
                 from config_manager import get_config_manager
                 config_manager = get_config_manager()
             _keeper_instance = CookieKeeper(config_manager)
-            logger.info("🌱 已创建 Cookie 守护实例（Web 侧）")
+            logger.info("🌱 已创建 Cookie 守护实例")
         return _keeper_instance
-
-
-def register_keeper(keeper: CookieKeeper) -> None:
-    """注册 Bot 侧创建的实例（带下载器热重载回调）"""
-    global _keeper_instance
-    with _keeper_lock:
-        _keeper_instance = keeper

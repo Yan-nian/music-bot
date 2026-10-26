@@ -176,10 +176,14 @@ class DownloadQueue:
 
     def set_max_concurrent_threadsafe(self, n: int):
         """从其他线程（如 Flask 请求线程）调整并发数"""
-        if self._loop and not self._loop.is_closed():
+        if self._loop and not self._loop.is_closed() and self._loop.is_running():
             self._loop.call_soon_threadsafe(self.set_max_concurrent, n)
         else:
-            logger.warning("队列尚未启动，忽略并发数调整")
+            # --web-only 模式下队列从来没有 start()，也就没有事件循环。
+            # 这里如果直接忽略，用户在 Web 上改并发数会「显示成功但根本不生效」，
+            # 而且仪表盘永远停在启动时那个值。没人跑 worker，直接改是安全的。
+            self.set_max_concurrent(n)
+            logger.info("队列未启动（无事件循环），并发数直接写入内存")
 
     # ---------- 入队 ----------
 

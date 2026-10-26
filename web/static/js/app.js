@@ -297,13 +297,34 @@ function debounce(fn, wait = 300) {
 
 function poll(fn, interval = 5000) {
   let stopped = false;
+  let timer = null;
+
+  const run = async () => {
+    try { await fn(); } catch (e) { /* 轮询失败静默 */ }
+  };
+
   const tick = async () => {
     if (stopped) return;
-    try { await fn(); } catch (e) { /* 轮询失败静默 */ }
-    if (!stopped) setTimeout(tick, interval);
+    // 页面在后台时没必要继续打接口，回到前台立刻补一次
+    if (!document.hidden) await run();
+    if (!stopped) timer = setTimeout(tick, interval);
   };
+
+  const onVisible = () => {
+    if (!document.hidden && !stopped) {
+      clearTimeout(timer);
+      run();
+      timer = setTimeout(tick, interval);
+    }
+  };
+  document.addEventListener('visibilitychange', onVisible);
+
   tick();
-  return () => { stopped = true; };
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+    document.removeEventListener('visibilitychange', onVisible);
+  };
 }
 
 function copyText(text) {

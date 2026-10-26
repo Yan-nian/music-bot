@@ -55,7 +55,7 @@ from web.tg_notifier import (
 from download_queue import get_download_queue, DownloadTask
 
 # Cookie 守护（网易云登录态自动维护）
-from cookie_keeper import CookieKeeper, register_keeper
+from cookie_keeper import CookieKeeper, get_keeper
 
 # Telegram 相关导入
 try:
@@ -670,7 +670,11 @@ class MusicBot:
                 success_songs = [s for s in songs_list if s.get('success')]
                 title = result.get('album_name', result.get('playlist_title', '未知'))
                 artist_name = result.get('artist', '未知艺术家')
-                
+                # file_size 存真实字节数（以前存的是曲目数，导致仪表盘的
+                # 「曲库容量」把专辑/歌单全漏掉，只下载专辑的用户永远显示 0 B）。
+                # 曲目数放在 quality 的 "n/m" 里，历史页已经这么显示了。
+                total_bytes = int(sum(float(s.get('size_mb') or 0) for s in success_songs) * 1024 * 1024)
+
                 self.config_manager.add_download_history(
                     platform=platform,
                     content_type=content_type,
@@ -678,7 +682,7 @@ class MusicBot:
                     title=title,
                     artist=artist_name,
                     file_path=download_dir,
-                    file_size=len(success_songs),
+                    file_size=total_bytes,
                     quality=f"{len(success_songs)}/{result.get('total_songs', 0)}"
                 )
         except Exception as e:
@@ -946,9 +950,11 @@ class MusicBot:
         logger.info("✅ Bot 健康检查任务已启动")
 
         # 启动网易云 Cookie 守护
+        # 用 get_keeper() 而不是 new 一个：Web 线程可能已经把实例建好了，
+        # 直接替换会导致两个守护线程同时跑、重复续期。
         try:
-            self.cookie_keeper = CookieKeeper(self.config_manager, self._reload_netease_downloader)
-            register_keeper(self.cookie_keeper)
+            self.cookie_keeper = get_keeper(self.config_manager)
+            self.cookie_keeper.on_cookies_updated = self._reload_netease_downloader
             self.cookie_keeper.start()
         except Exception as e:
             logger.warning(f"⚠️ Cookie 守护启动失败: {e}")
@@ -1136,9 +1142,33 @@ class MusicBot:
             logger.error(f"❌ Application 重建失败: {e}，将在下次健康检查时重试")
 
 
+def _reload_netease_after_cookie_change():
+    """Cookie 变更后热重载下载器（Web 侧扫码/手动填写时用）"""
+    try:
+        from downloaders import get_downloader
+        downloader = get_downloader('netease')
+        if hasattr(downloader, 'reload_config'):
+            downloader.reload_config()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"热重载网易云下载器失败: {e}")
+
+
 def run_web_server(host: str = '0.0.0.0', port: int = 5000, db_path: str = None):
     """运行 Web 服务器"""
     init_web_app(db_path)
+
+    # --web-only 模式下没人启动 Cookie 守护线程，之前只有 run_bot() 会启动，
+    # 结果队列/仪表盘写着「Cookie 自动守护中」而实际什么都没在守护。
+    # start() 是幂等的，和 Bot 同时跑也不会起两个线程。
+    try:
+        from cookie_keeper import get_keeper
+        keeper = get_keeper()
+        if keeper.on_cookies_updated is None:
+            keeper.on_cookies_updated = _reload_netease_after_cookie_change
+        keeper.start()
+    except Exception:
+        logger.exception("启动 Cookie 守护线程失败（不影响 Web 服务）")
+
     web_app.run(host=host, port=port, debug=False, threaded=True)
 
 
@@ -1169,10 +1199,10 @@ def main():
         # 同时运行 Web 和 Bot
         bot = MusicBot(args.db_path)
         
-        # 在后台线程运行 Web 服务
+        # 在后台线程运行 Web 服务（db_path 一并传下去，否则 Web 走默认库）
         web_thread = threading.Thread(
             target=run_web_server,
-            kwargs={'port': args.web_port},
+            kwargs={'port': args.web_port, 'db_path': args.db_path},
             daemon=True
         )
         web_thread.start()

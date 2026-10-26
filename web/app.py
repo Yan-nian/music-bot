@@ -13,11 +13,9 @@ import logging
 import hashlib
 import secrets
 import threading
-import datetime as dt
 from collections import defaultdict
 from functools import wraps
 from pathlib import Path
-from typing import Optional
 from flask import (Flask, Blueprint, jsonify, request, render_template,
                    session, redirect, url_for)
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -201,7 +199,17 @@ def init_app(db_path: str = None):
     tg_setup_bp = create_tg_setup_blueprint()
     init_tg_setup(config_manager)
     app.register_blueprint(tg_setup_bp)
-    
+
+    # 队列并发数按配置初始化。
+    # 之前只有 MusicBot.__init__ 会读 download_max_concurrent，--web-only 模式下
+    # 没人读，队列永远停在硬编码的 3，设置页改的值重启后就对不上了。
+    try:
+        from download_queue import get_download_queue
+        mc = config_manager.get_config('download_max_concurrent', 3)
+        get_download_queue(max_concurrent=max(1, int(mc or 3)))
+    except Exception:
+        logger.exception("初始化下载队列并发数失败，沿用默认值")
+
     return app
 
 
@@ -1330,10 +1338,19 @@ def api_queue_config():
         mc = data.get('max_concurrent')
         if mc and isinstance(mc, int) and mc >= 1:
             from download_queue import get_download_queue
-            # 信号量属于 Bot 的事件循环，必须切线程改，不能在 Flask 线程里直接动
-            get_download_queue().set_max_concurrent_threadsafe(mc)
+            queue = get_download_queue()
+            # 信号量属于 Bot 的事件循环，必须切线程改，不能在 Flask 线程里直接动。
+            # --web-only 下没有事件循环时，实现里会退回直接写内存。
+            queue.set_max_concurrent_threadsafe(mc)
             config_manager.set_config('download_max_concurrent', mc)
-            return jsonify({'success': True, 'message': f'最大并发数已设为 {mc}'})
+            # 回读实际生效值：原来不管有没有生效都回一句「已设为 N」，
+            # web-only 模式下其实被忽略了，前端却以为成功。
+            effective = queue.max_concurrent
+            return jsonify({
+                'success': True,
+                'message': f'最大并发数已设为 {effective}',
+                'data': {'max_concurrent': effective},
+            })
         return jsonify({'success': False, 'error': 'invalid max_concurrent'}), 400
     except Exception as e:
         logger.error(f"更新队列配置失败: {e}")
@@ -1545,27 +1562,6 @@ def _job_payload(job):
     return job.to_dict()
 
 
-def _local_date_of(utc_timestamp) -> Optional[dt.date]:
-    """把数据库里的 UTC 时间戳换算成本地日期。
-
-    SQLite 的 CURRENT_TIMESTAMP 一律写 UTC，前端也是按 UTC 解析后再本地化。
-    后端做「今日」统计时同样要先转本地，否则东八区 0:00-8:00 的下载会被漏掉。
-    """
-    if not utc_timestamp:
-        return None
-    text = str(utc_timestamp)[:19]
-    try:
-        parsed = dt.datetime.strptime(text, '%Y-%m-%d %H:%M:%S')
-    except ValueError:
-        try:
-            parsed = dt.datetime.fromisoformat(str(utc_timestamp).replace('Z', '+00:00'))
-        except ValueError:
-            return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=dt.timezone.utc)
-    return parsed.astimezone().date()
-
-
 @app.route('/api/jobs', methods=['GET'])
 @login_required
 def api_jobs():
@@ -1744,42 +1740,35 @@ def api_job_refresh_metadata():
 @app.route('/api/dashboard', methods=['GET'])
 @login_required
 def api_dashboard():
-    """首页一次拿齐：统计 + 队列 + 最近下载 + 平台状态
+    """首页一次拿齐：统计 + 队列 + 最近下载 + 登录态
 
     旧首页 4 个统计卡片是写死的假数据（1234 / 1180 / 3 / 56），
     这里把真实数据一次性聚合出来，省得前端发 4 个请求。
+
+    注意：统计必须走 SQL 聚合（get_history_stats），不能拿 history 列表
+    的长度去数——之前用 get_download_history(limit=200) 算总数，
+    历史超过 200 条之后「累计下载」就永远停在 200 不再增长。
     """
     try:
         from download_queue import get_download_queue
 
-        history = config_manager.get_download_history(limit=200)
+        stats = config_manager.get_history_stats()
         queue = get_download_queue().get_status()
         playlists = config_manager.get_subscribed_playlists()
         meta = _netease_keeper().get_meta()
-
-        song_records = [h for h in history if h.get('content_type') == 'song']
-        album_records = [h for h in history if h.get('content_type') == 'album']
-        playlist_records = [h for h in history if h.get('content_type') == 'playlist']
-
-        total_downloaded = len(song_records) + len(album_records) + len(playlist_records)
-        total_bytes = sum(int(h.get('file_size') or 0) for h in song_records)
-        # created_at 由 SQLite CURRENT_TIMESTAMP 写入，是 UTC。
-        # 直接跟本地日期字符串比较的话，东八区用户 0:00-8:00 之间的下载会算进「昨天」。
-        today_count = sum(1 for h in history if _local_date_of(h.get('created_at')) == dt.date.today())
-
-        # 把歌单的曲目统计带上，前端可直接画进度条
-        for playlist in playlists:
-            playlist['stats'] = config_manager.get_playlist_stats(playlist['playlist_id'])
 
         return jsonify({
             'success': True,
             'data': {
                 'stats': {
-                    'total_downloads': total_downloaded,
-                    'today_downloads': today_count,
-                    'total_size': total_bytes,
+                    'total_downloads': stats['total'],
+                    'today_downloads': stats['today'],
+                    'total_size': stats['total_bytes'],
                     'playlist_count': len(playlists),
                     'active_playlists': sum(1 for p in playlists if p.get('enabled')),
+                    'song_count': stats['song_count'],
+                    'album_count': stats['album_count'],
+                    'bundle_count': stats['playlist_count'],
                 },
                 'queue': queue,
                 'netease': {
@@ -1787,7 +1776,8 @@ def api_dashboard():
                     'nickname': meta.get('nickname', ''),
                     'vip_label': meta.get('vip_label', ''),
                 },
-                'recent': history[:8],
+                # 最近 8 条单独查，不要把整张表捞出来再切
+                'recent': config_manager.get_download_history(limit=8),
             }
         })
     except Exception as e:

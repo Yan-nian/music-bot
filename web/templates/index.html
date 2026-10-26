@@ -39,7 +39,7 @@
         <i data-icon="folder" data-size="15"></i></span>
     </div>
     <div class="stat-value" id="statSize">—</div>
-    <div class="stat-meta">单曲文件合计</div>
+    <div class="stat-meta">全部音频文件</div>
   </div>
   <div class="stat">
     <div class="stat-top">
@@ -64,6 +64,7 @@
       </div>
     </div>
     <div class="card-body tight">
+      <div id="jobBanner" class="notice hidden" style="margin-bottom:10px"></div>
       <div id="queueList"></div>
     </div>
   </div>
@@ -210,12 +211,33 @@ function renderRecent(items) {
     </tr>`).join('');
 }
 
-async function loadDashboard() {
+let lastDigest = '';
+let refreshing = false;
+
+function showJobBanner(text) {
+  const el = document.getElementById('jobBanner');
+  el.innerHTML = `${icon('info', 16)}<span>${escapeHtml(text)}</span>`;
+  el.classList.remove('hidden');
+}
+
+function hideJobBanner() {
+  document.getElementById('jobBanner').classList.add('hidden');
+}
+
+async function loadDashboard(options = {}) {
+  const force = options === true || options.force;
   try {
     const data = await api('/api/dashboard');
+    // 8 秒轮询如果每次都重建 DOM，会造成表格闪烁，而且正好在用户点「取消」
+    // 的瞬间重建会让点击落空。数据没变就不动。
+    const digest = JSON.stringify([data.stats, data.queue, data.netease, data.recent]);
+    if (!force && digest === lastDigest) return;
+    lastDigest = digest;
+
     const s = data.stats;
     document.getElementById('statTotal').textContent = fmtNumber(s.total_downloads);
-    document.getElementById('statTotalMeta').textContent = '条历史记录';
+    document.getElementById('statTotalMeta').textContent =
+      `单曲 ${fmtNumber(s.song_count)} · 专辑 ${fmtNumber(s.album_count)} · 歌单 ${fmtNumber(s.bundle_count)}`;
     document.getElementById('statToday').textContent = fmtNumber(s.today_downloads);
     document.getElementById('statTodayMeta').textContent = s.today_downloads > 0 ? '今天有收获' : '今天还没有新下载';
     document.getElementById('statSize').textContent = formatBytes(s.total_size);
@@ -229,19 +251,36 @@ async function loadDashboard() {
   }
 }
 
+async function manualRefresh(btn) {
+  if (refreshing) return;
+  refreshing = true;
+  btn.classList.add('spin');
+  try {
+    await loadDashboard({ force: true });
+  } finally {
+    // 留一点时间让转动被看见，否则「点了没反应」的感觉比不转更糟
+    setTimeout(() => { btn.classList.remove('spin'); refreshing = false; }, 350);
+  }
+}
+
 document.addEventListener('click', async (e) => {
   const cancelId = e.target.closest('[data-cancel]')?.dataset.cancel;
   if (!cancelId) return;
+  const btn = e.target.closest('[data-cancel]');
+  setBusy(btn, true, '取消中…');
   try {
     await api(`/api/queue/cancel/${encodeURIComponent(cancelId)}`, { method: 'POST' });
     toast('已请求取消', 'ok');
-    loadDashboard();
-  } catch (err) { toast(err.message, 'err'); }
+    await loadDashboard({ force: true });
+  } catch (err) {
+    toast(err.message, 'err');
+    setBusy(btn, false);
+  }
 });
 
-document.getElementById('refreshBtn').addEventListener('click', loadDashboard);
-document.getElementById('queueRefresh').addEventListener('click', loadDashboard);
-document.getElementById('queuePill').addEventListener('click', loadDashboard);
+document.getElementById('refreshBtn').addEventListener('click', (e) => manualRefresh(e.currentTarget));
+document.getElementById('queueRefresh').addEventListener('click', (e) => manualRefresh(e.currentTarget));
+document.getElementById('queuePill').addEventListener('click', () => loadDashboard({ force: true }));
 
 document.getElementById('btnSyncAll').addEventListener('click', async (e) => {
   const btn = e.currentTarget;
@@ -255,10 +294,11 @@ document.getElementById('btnSyncAll').addEventListener('click', async (e) => {
   try {
     const job = await api('/api/jobs/playlist-sync-all', { method: 'POST' });
     toast('已开始后台同步', 'ok');
+    showJobBanner('同步中，正在准备…');
     watchJob(job.id, (j) => {
-      if (j.message) document.getElementById('queueDesc').textContent = `同步中：${j.message}`;
-    }).then(() => { toast('全部歌单同步完成', 'ok'); loadDashboard(); })
-      .catch((err) => toast(err.message, 'err'));
+      if (j.message) showJobBanner(`同步中：${j.message}`);
+    }).then(() => { hideJobBanner(); toast('全部歌单同步完成', 'ok'); loadDashboard({ force: true }); })
+      .catch((err) => { hideJobBanner(); toast(err.message, 'err'); loadDashboard({ force: true }); });
   } catch (err) { toast(err.message, 'err'); }
   finally { setBusy(btn, false); }
 });
@@ -269,7 +309,11 @@ document.getElementById('btnRefreshMeta').addEventListener('click', async (e) =>
   try {
     const job = await api('/api/jobs/refresh-metadata', { method: 'POST', body: {} });
     toast('已开始后台刷新元数据', 'ok');
-    watchJob(job.id).then(() => toast('元数据刷新完成', 'ok')).catch((err) => toast(err.message, 'err'));
+    showJobBanner('正在刷新已下载文件的元数据…');
+    watchJob(job.id, (j) => {
+      if (j.message) showJobBanner(`刷新元数据：${j.message}`);
+    }).then(() => { hideJobBanner(); toast('元数据刷新完成', 'ok'); })
+      .catch((err) => { hideJobBanner(); toast(err.message, 'err'); });
   } catch (err) { toast(err.message, 'err'); }
   finally { setBusy(btn, false); }
 });

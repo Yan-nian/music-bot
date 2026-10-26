@@ -682,8 +682,11 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
   .stat-grid { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 560px) {
-  .stat-grid { grid-template-columns: 1fr; }
-  .stat-value { font-size: 22px; }
+  /* 4 个统计卡片竖着排会把首屏全占满，2×2 更省空间 */
+  .stat-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .stat { padding: 12px; }
+  .stat-value { font-size: 20px; }
+  .stat-meta { font-size: 11px; }
   /* 窄屏下 7 列表格挤成一团没法看；标了 .col-hide-sm 的列（平台/类型/音质）
      在手机上直接收起，只留标题、大小、时间这些最有用的信息。 */
   .col-hide-sm { display: none; }

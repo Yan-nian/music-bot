@@ -94,9 +94,12 @@ function render() {
 
   body.innerHTML = list.map((r) => {
     const isSong = r.content_type === 'song';
-    const size = isSong
+    // 专辑/歌单行的 file_size：新版本存总字节数，老数据存的是「成功曲目数」。
+    // 1MB 是天然分界线（一个专辑的音频不可能小于 1MB，曲目数不可能大于 1MB），
+    // 老数据继续按「N 首」显示，避免升级后历史记录看起来像坏了。
+    const size = isSong || (r.file_size || 0) >= 1048576
       ? formatBytes(r.file_size)
-      : `${r.file_size || 0} 首`;
+      : (r.file_size ? `${r.file_size} 首` : '—');
     return `<tr>
       <td class="truncate" title="${escapeHtml(r.title || '')}">${escapeHtml(r.title || '未知')}</td>
       <td class="small muted-2 truncate" title="${escapeHtml(r.artist || '')}">${escapeHtml(r.artist || '—')}</td>
